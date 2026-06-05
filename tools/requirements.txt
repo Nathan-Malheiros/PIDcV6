@@ -1,0 +1,11 @@
+# Ferramentas Python do Ball Balancer (calibrate.py, PIDSimba.py).
+# Instale com:  python -m pip install -r tools/requirements.txt
+#
+# Nota: o pygame "classico" nao tem wheel para Python 3.13/3.14. Usamos o
+# pygame-ce (fork community edition, drop-in: os scripts fazem "import pygame"
+# normalmente). Em Python <= 3.12 tanto faz pygame ou pygame-ce.
+#
+# O validador headless sim_pid.py NAO precisa de nada disto (so stdlib).
+
+pygame-ce>=2.5.0
+pyserial>=3.5

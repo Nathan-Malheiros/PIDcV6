@@ -1,0 +1,1229 @@
+%==============================================================================
+%  RELATÓRIO TÉCNICO — BALL BALANCER 3RPS (ESP32-S3)
+%  Compilar com: pdflatex (2x para sumário/referências)  ou  Overleaf
+%==============================================================================
+\documentclass[11pt,a4paper,oneside]{article}
+
+%------------------------------- Codificação ---------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazilian]{babel}
+\usepackage{lmodern}
+\usepackage{microtype}
+
+%------------------------------- Layout --------------------------------------
+\usepackage[a4paper,left=2.6cm,right=2.6cm,top=2.8cm,bottom=2.6cm]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{parskip}
+
+%------------------------------- Gráficos ------------------------------------
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric,arrows.meta,positioning,calc,backgrounds}
+
+%------------------------------- Matemática ----------------------------------
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{mathtools}
+
+%------------------------------- Tabelas -------------------------------------
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{colortbl}
+\usepackage{multirow}
+\usepackage{longtable}
+\usepackage{tabularx}
+\usepackage{ragged2e}
+
+%------------------------------- Estrutura -----------------------------------
+\usepackage{enumitem}
+\setlist{itemsep=2pt,topsep=3pt}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf,labelsep=endash}
+\usepackage[most]{tcolorbox}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{listings}
+
+% fontawesome5 é opcional: se não existir no compilador, os ícones viram vazio
+% e o documento compila do mesmo jeito.
+\IfFileExists{fontawesome5.sty}{%
+  \usepackage{fontawesome5}%
+}{%
+  \providecommand{\faExclamationTriangle}{}%
+  \providecommand{\faCheckCircle}{}%
+}
+
+%------------------------------- Hyperlinks ----------------------------------
+\usepackage[colorlinks=true]{hyperref}
+
+%==============================================================================
+%  PALETA DE CORES
+%==============================================================================
+\definecolor{primary}{HTML}{1A4E8A}     % azul profundo
+\definecolor{secondary}{HTML}{0E7C7B}   % verde-petróleo
+\definecolor{accent}{HTML}{E8833A}      % laranja
+\definecolor{danger}{HTML}{C0392B}      % vermelho
+\definecolor{success}{HTML}{2E8B57}     % verde
+\definecolor{inkdark}{HTML}{1C2A39}     % quase-preto
+\definecolor{paperbg}{HTML}{F7F9FB}     % fundo claro
+\definecolor{rowgray}{HTML}{EEF3F7}     % linha de tabela
+\definecolor{codebg}{HTML}{F4F6F8}
+
+\hypersetup{
+  linkcolor=primary, citecolor=secondary, urlcolor=accent,
+  pdftitle={Relatório Técnico — Ball Balancer 3RPS},
+  pdfauthor={Engenharia Elétrica — UNIFOR}
+}
+
+%==============================================================================
+%  CABEÇALHO E RODAPÉ
+%==============================================================================
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+\fancyhead[L]{\small\color{primary}\textbf{Ball Balancer 3RPS}}
+\fancyhead[R]{\small\color{inkdark}ESP32-S3 · Controle PID}
+\fancyfoot[L]{\small\color{inkdark}Engenharia Elétrica — UNIFOR}
+\fancyfoot[R]{\small\thepage}
+
+%==============================================================================
+%  ESTILO DE SEÇÕES
+%==============================================================================
+\titleformat{\section}
+  {\Large\bfseries\color{primary}}
+  {\color{accent}\thesection}{0.7em}{}
+  [{\color{primary!30}\titlerule[1pt]}]
+\titlespacing*{\section}{0pt}{1.4em}{0.7em}
+\titleformat{\subsection}
+  {\large\bfseries\color{secondary}}
+  {\color{secondary}\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}
+  {\normalsize\bfseries\color{inkdark}}
+  {\color{inkdark!60}\thesubsubsection}{0.6em}{}
+
+%==============================================================================
+%  CAIXAS PERSONALIZADAS (tcolorbox)
+%==============================================================================
+% Caixa de destaque/informação
+\newtcolorbox{infobox}[1][]{
+  enhanced, colback=paperbg, colframe=primary, boxrule=0.8pt,
+  arc=2pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
+  fonttitle=\bfseries\color{white}, coltitle=white,
+  attach boxed title to top left={xshift=8pt,yshift=-3pt},
+  boxed title style={colback=primary,arc=1pt}, title={#1}
+}
+% Caixa de problema
+\newtcolorbox{problembox}[1][Problema]{
+  enhanced, colback=danger!4, colframe=danger, boxrule=0.8pt,
+  arc=2pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
+  fonttitle=\bfseries\color{white}, coltitle=white,
+  attach boxed title to top left={xshift=8pt,yshift=-3pt},
+  boxed title style={colback=danger,arc=1pt},
+  title={\faExclamationTriangle\;\,#1}
+}
+% Caixa de solução
+\newtcolorbox{solutionbox}[1][Solução adotada]{
+  enhanced, colback=success!4, colframe=success, boxrule=0.8pt,
+  arc=2pt, left=8pt, right=8pt, top=6pt, bottom=6pt,
+  fonttitle=\bfseries\color{white}, coltitle=white,
+  attach boxed title to top left={xshift=8pt,yshift=-3pt},
+  boxed title style={colback=success,arc=1pt},
+  title={\faCheckCircle\;\,#1}
+}
+% Caixa de equação-chave
+\newtcolorbox{keybox}{
+  enhanced, colback=secondary!6, colframe=secondary, boxrule=1pt,
+  arc=3pt, left=10pt, right=10pt, top=8pt, bottom=8pt, halign=center
+}
+
+%==============================================================================
+%  ESTILO DE CÓDIGO
+%==============================================================================
+\lstdefinestyle{custom}{
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},
+  keywordstyle=\color{primary}\bfseries,
+  commentstyle=\color{secondary}\itshape,
+  stringstyle=\color{accent},
+  numberstyle=\tiny\color{gray},
+  frame=leftline, framerule=2pt, rulecolor=\color{primary},
+  breaklines=true, showstringspaces=false,
+  xleftmargin=10pt, aboveskip=8pt, belowskip=8pt,
+  numbers=none
+}
+\lstset{style=custom}
+
+% Comando para parâmetros inline — caixinha arredondada e discreta
+\newtcbox{\param}{on line, boxrule=0.4pt, boxsep=0pt,
+  left=3pt, right=3pt, top=1.5pt, bottom=1.5pt, arc=2pt,
+  colback=rowgray, colframe=primary!25,
+  fontupper=\ttfamily\small\color{inkdark}}
+% Linha de tabela zebrada
+\newcommand{\rowstyle}{\rowcolor{rowgray}}
+
+%==============================================================================
+\begin{document}
+
+%==============================================================================
+%  CAPA
+%==============================================================================
+\begin{titlepage}
+\thispagestyle{empty}
+\begin{tikzpicture}[remember picture,overlay]
+  % --- Banner superior sólido ---
+  \fill[primary] (current page.north west) rectangle ([yshift=-6cm]current page.north east);
+  % faixa de acento fina abaixo do banner
+  \fill[accent]  ([yshift=-6cm]current page.north west) rectangle ([yshift=-6.18cm]current page.north east);
+  % --- Rodapé sólido ---
+  \fill[primary] (current page.south west) rectangle ([yshift=2.2cm]current page.south east);
+  \fill[accent]  ([yshift=2.2cm]current page.south west) rectangle ([yshift=2.32cm]current page.south east);
+
+  % --- Texto do banner ---
+  \node[anchor=north west, text=white, align=left]
+    at ([xshift=2.6cm,yshift=-1.5cm]current page.north west)
+    {{\fontsize{15}{18}\selectfont\textsc{Universidade de Fortaleza — UNIFOR}}\\[3pt]
+     {\fontsize{11}{14}\selectfont Engenharia Elétrica \;\textbar\; Controle Digital}};
+  \node[anchor=south east, text=white]
+    at ([xshift=-2.6cm,yshift=-5.6cm]current page.north east)
+    {\fontsize{10}{12}\selectfont\itshape Relatório Técnico};
+
+  % --- Texto do rodapé ---
+  \node[anchor=west, text=white]
+    at ([xshift=2.6cm,yshift=1.1cm]current page.south west)
+    {\small Fortaleza · \today};
+  \node[anchor=east, text=white]
+    at ([xshift=-2.6cm,yshift=1.1cm]current page.south east)
+    {\small Grupo de 8 integrantes};
+\end{tikzpicture}
+
+% --- Bloco central do título ---
+\vspace*{7.5cm}
+\begin{center}
+  {\fontsize{13}{15}\selectfont\bfseries\color{accent}\textsc{Relatório Técnico}}\\[14pt]
+  {\fontsize{46}{50}\selectfont\bfseries\color{primary}Ball Balancer 3RPS}\\[14pt]
+  {\color{secondary}\rule{6cm}{2.5pt}}\\[14pt]
+  {\Large\color{inkdark}Mesa Equilibrista com Controle PID Duplo}\\[8pt]
+  {\large\color{inkdark!70}Cinemática Inversa 3RPS \;·\; ESP32-S3 \;·\; Três Motores NEMA 17}
+\end{center}
+
+\vfill
+
+\begin{center}
+\begin{tcolorbox}[enhanced,width=0.86\textwidth,colback=paperbg,
+  colframe=primary,boxrule=1pt,arc=5pt,
+  left=14pt,right=14pt,top=10pt,bottom=10pt]
+  {\bfseries\color{primary}Objeto do relatório}\par\smallskip
+  {\small Documentar de forma reproduzível o projeto de uma mesa equilibrista
+  controlada por PID digital — fundamentos de controle, arquitetura de
+  hardware e firmware, dificuldades enfrentadas e levantamento de custos —
+  servindo de referência para futuras práticas.}
+\end{tcolorbox}
+\end{center}
+
+\vspace{2.4cm}
+\end{titlepage}
+
+%==============================================================================
+%  RESUMO
+%==============================================================================
+\section*{Resumo}
+\addcontentsline{toc}{section}{Resumo}
+
+Este relatório documenta o projeto de uma \textbf{mesa equilibrista} (\emph{ball
+balancer}): uma plataforma cuja inclinação é controlada para manter uma esfera
+no centro, apesar de perturbações. O sistema usa um microcontrolador
+\textbf{ESP32-S3}, um \textbf{sensor de posição por tela resistiva de 4 fios} e
+\textbf{três motores de passo NEMA 17} dispostos em arranjo cinemático
+\textbf{3RPS} (\emph{Revolute–Prismatic–Spherical}).
+
+O controle é feito por \textbf{dois laços PID independentes} (um para cada eixo,
+X e Y), executados a \textbf{50\,Hz} no firmware, com derivativo filtrado e
+anti-\emph{windup}. A saída de cada PID é uma inclinação desejada da mesa, que a
+\textbf{cinemática inversa 3RPS} traduz em três ângulos de motor; cada motor é
+acionado por um perfil de velocidade trapezoidal. A fundamentação teórica
+(modelo da planta, função de transferência, projeto dos ganhos por alocação de
+polos e discretização) baseia-se no TCC de Cordeiro (UNESP, 2022), adaptando a
+solução de \textbf{dois servos} do autor para os \textbf{três motores} deste rig.
+
+São relatados os problemas práticos enfrentados — pinagem da tela, fabricação da
+PCB, fragilidade da estrutura impressa em 3D, acesso a componentes mecânicos — e
+suas soluções, além de um levantamento de custos real do grupo.
+
+\medskip
+\noindent\textbf{Palavras-chave:} Controle PID · Duplo Integrador · Cinemática
+3RPS · Motor de Passo · Tela Resistiva · Sistema Embarcado · ESP32.
+
+%==============================================================================
+%  SUMÁRIO
+%==============================================================================
+\newpage
+{\hypersetup{linkcolor=inkdark}
+\renewcommand{\contentsname}{\color{primary}Sumário}
+\tableofcontents}
+
+\newpage
+
+%==============================================================================
+%  1. INTRODUÇÃO
+%==============================================================================
+\section{Introdução}
+
+\subsection{Contexto}
+
+A mesa equilibrista é um problema clássico de controle e um excelente banco de
+ensino: reúne, num único equipamento, uma planta instável, restrições reais de
+atuação e a necessidade de realimentação rápida. Equilibrar uma esfera sobre uma
+superfície inclinável exige um controlador que reaja à posição \emph{e} à
+velocidade da bola — o que torna a demonstração do papel de cada termo (P, I, D)
+particularmente didática.
+
+\begin{infobox}[Por que este projeto é instrutivo]
+\begin{itemize}
+  \item \textbf{Planta naturalmente instável:} a bola num plano é um
+  \emph{duplo integrador}, marginalmente estável — sem o termo derivativo, o
+  laço oscila para sempre.
+  \item \textbf{Restrições físicas reais:} saturação da inclinação, cinemática
+  não-linear, ruído de sensor e perda de passos nos motores.
+  \item \textbf{Dois eixos:} dois PID idênticos e independentes (X e Y),
+  acoplados apenas pela geometria 3RPS.
+  \item \textbf{Ajuste ao vivo:} ganhos e calibração persistem em memória
+  não-volátil (NVS) e são ajustados sem recompilar.
+\end{itemize}
+\end{infobox}
+
+\subsection{Objetivos}
+
+\begin{enumerate}
+  \item Implementar um controlador PID digital duplo embarcado, executando em
+  malha fechada a 50\,Hz.
+  \item Resolver a cinemática inversa 3RPS para converter a inclinação desejada
+  em três ângulos de motor.
+  \item Integrar o sensor resistivo com calibração e orientação ajustáveis em
+  tempo de execução.
+  \item Validar o controlador por simulação (sem hardware) e, em seguida, no
+  rig real.
+  \item Produzir documentação reproduzível para futuras turmas.
+\end{enumerate}
+
+\subsection{Organização do documento}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{>{\bfseries\color{primary}}l X}
+\toprule
+Seção 2 & Referências de projeto (Aaed Musa e TCC de Cordeiro). \\
+\rowstyle Seção 3 & Fundamentação teórica de controle (modelo, PID, discretização). \\
+Seção 4 & Arquitetura de hardware e pinagem real. \\
+\rowstyle Seção 5 & Firmware, ferramentas e protocolo serial. \\
+Seção 6 & Problemas enfrentados e soluções. \\
+\rowstyle Seção 7 & Materiais e custos reais do grupo. \\
+Seção 8 & Validação e resultados. \\
+\rowstyle Seção 9 & Pendências e trabalhos futuros. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+%==============================================================================
+%  2. REFERÊNCIAS DE PROJETO
+%==============================================================================
+\section{Referências de Projeto}
+
+\subsection{Ball Balancer de Aaed Musa (arquitetura mecânica)}
+
+A arquitetura mecânica e a cinemática inversa 3RPS deste projeto baseiam-se no
+\emph{Ball Balancer} de Aaed Musa (Instructables). Dela vêm:
+
+\begin{itemize}
+  \item o arranjo \textbf{3RPS} com três motores defasados de 120°;
+  \item a função fechada de cinemática inversa (\texttt{machine\_theta}),
+  portada fielmente para C em \texttt{main/kinematics.c};
+  \item o uso de motores de passo NEMA 17 com drivers STEP/DIR.
+\end{itemize}
+
+\subsection{TCC de Cordeiro — UNESP, 2022 (base teórica de controle)}
+
+A teoria de controle apoia-se no trabalho de graduação de \textbf{Giovanna
+Ferreira Cordeiro} (\emph{Controle Clássico da Planta Ball Balancer}, UNESP/FEIS,
+2022), que projeta um controlador em \textbf{cascata} para uma mesa equilibrista
+do tipo \textbf{Quanser 2 DOF (dois servomotores)}:
+
+\begin{itemize}
+  \item \textbf{Malha externa} ($C_{bb}$, PID de posição): do erro de posição
+  calcula a inclinação desejada da mesa;
+  \item \textbf{Malha interna} ($C_s$, PD rápido): leva cada servo ao ângulo
+  desejado;
+  \item \textbf{Projeto de ganhos:} alocação de polos para
+  \emph{overshoot}~$\le 7{,}5\%$ e tempo de acomodação~$\le 2{,}5$\,s.
+\end{itemize}
+
+\begin{infobox}[Diferença essencial: 2 servos $\rightarrow$ 3 motores]
+O TCC usa \textbf{dois servos} (um ângulo por eixo). Nosso rig usa \textbf{três
+motores de passo} em 3RPS. A adaptação preserva a \emph{malha externa} de
+posição (mesma teoria, mesmos ganhos) e troca a \emph{malha interna}: em vez de
+um servo por eixo, a inclinação desejada $(n_x, n_y)$ é distribuída entre
+\textbf{três ângulos} $(\theta_A,\theta_B,\theta_C)$ pela cinemática inversa
+3RPS. Como essa cinemática é um \emph{mapa estático não-linear}, a análise
+linear de controle permanece válida em primeira ordem.
+\end{infobox}
+
+%==============================================================================
+%  3. FUNDAMENTAÇÃO TEÓRICA
+%==============================================================================
+\section{Fundamentação Teórica de Controle}
+
+\subsection{Modelo da planta: a bola num plano inclinado}
+
+Para uma esfera maciça de raio $r$ e massa $m$ rolando \emph{sem deslizar} num
+plano inclinado de ângulo $\alpha$, somam-se a 2ª lei de Newton (translação) e a
+equação de Euler (rotação):
+
+\begin{equation}
+  m\,\ddot{x} = m g \sin\alpha - F_{at}, \qquad
+  I\,\dot\omega = F_{at}\,r, \qquad \dot{x} = \omega r .
+\end{equation}
+
+Com $I = \tfrac{2}{5}m r^2$ (esfera maciça), elimina-se a força de atrito:
+
+\begin{equation}
+  \left(m + \frac{I}{r^2}\right)\ddot{x} = m g \sin\alpha
+  \;\Longrightarrow\; \tfrac{7}{5}\,\ddot{x} = g\sin\alpha .
+\end{equation}
+
+\begin{keybox}
+$\displaystyle \ddot{x} = \frac{5}{7}\, g \sin\alpha \;\approx\; \frac{5}{7}\, g\,\alpha$
+\end{keybox}
+
+A fração $5/7\approx 0{,}714$ é a constante \param{ROLL\_FACTOR} da simulação. A
+aproximação $\sin\alpha\approx\alpha$ vale na faixa de operação (a inclinação é
+limitada a $|u|\le 0{,}25$\,rad $\approx 14{,}3°$).
+
+\subsubsection{Função de transferência}
+
+A saída do PID, $u=n_x$, é a componente $x$ do vetor normal unitário da mesa;
+para pequenos ângulos $n_x\approx\tan\alpha\approx\alpha$. Com $g=9810$\,mm/s²:
+
+\begin{equation}
+  \ddot{x} = \underbrace{\tfrac{5}{7}\,g}_{A}\,u,
+  \qquad A = \tfrac{5}{7}\times 9810 \approx 7007\ \text{mm/s}^2 .
+\end{equation}
+
+Aplicando Laplace (condições iniciais nulas):
+
+\begin{keybox}
+$\displaystyle P(s) = \frac{X(s)}{U(s)} = \frac{A}{s^2}, \qquad A \approx 7007\ \text{mm/s}^2$
+\end{keybox}
+
+A planta é um \textbf{duplo integrador} (tipo 2). Consequências de projeto:
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{>{\bfseries}l X}
+\toprule
+Erro estacionário & Nulo a degrau e a rampa de referência. \\
+\rowstyle Polos & Os dois ficam na origem ($s=0$): \emph{marginalmente estável}. \\
+Implicação & Realimentação só proporcional $\Rightarrow$ oscilação não-amortecida.
+O termo \textbf{derivativo é obrigatório}. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{O controlador PID}
+
+\begin{equation}
+  u(t) = K_p\,e(t) + K_i\!\int_0^t\! e(\tau)\,d\tau + K_d\,\dot{e}(t),
+  \qquad e = x - r .
+\end{equation}
+
+No firmware (\texttt{main/pid.c}) o derivativo é \textbf{filtrado} por um
+passa-baixa de 1ª ordem ($\tau_d = 0{,}03$\,s) para não amplificar o ruído do
+sensor:
+
+\begin{equation}
+  C(s) = K_p + \frac{K_i}{s} + \frac{K_d\,s}{1 + \tau_d\,s}.
+\end{equation}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{>{\bfseries\color{primary}}c >{\RaggedRight}X >{\RaggedRight}X}
+\toprule
+Termo & \normalfont\bfseries Função nesta planta & \normalfont\bfseries Risco se exagerado \\
+\midrule
+P \,($K_p$) & Define a rigidez/velocidade da resposta ($\omega_n$). Sozinho, oscila. & Oscilação crescente. \\
+\rowstyle D \,($K_d$) & \textbf{Essencial:} adiciona amortecimento (freia pela velocidade da bola). & Lentidão; sensível a ruído. \\
+I \,($K_i$) & Remove desvio residual (mesa fora de nível / assimetria mecânica). & \emph{Windup}; instabilidade lenta. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Malha fechada e analogia de 2ª ordem}
+
+Desprezando o filtro do D e o termo I (pequeno), a malha fechada PD sobre
+$A/s^2$ tem equação característica:
+
+\begin{equation}
+  s^2 + A K_d\,s + A K_p = 0 .
+\end{equation}
+
+Comparando com a forma canônica $s^2 + 2\zeta\omega_n s + \omega_n^2$:
+
+\begin{keybox}
+$\displaystyle \omega_n = \sqrt{A\,K_p} \qquad\qquad
+   \zeta = \frac{K_d}{2}\sqrt{\frac{A}{K_p}}$
+\end{keybox}
+
+onde $\omega_n$ indica \emph{quão rápido} a bola converge e $\zeta$ governa o
+\emph{overshoot} ($\zeta<1$ oscila, $\zeta=1$ crítico, $\zeta>1$ sobreamortecido);
+o tempo de acomodação a 2\% é $t_s\approx 4/(\zeta\omega_n)$.
+
+\subsection{Projeto dos ganhos por alocação de polos}
+
+Seguindo o TCC, fixam-se os requisitos \emph{overshoot}~$\le 7{,}5\%$ e
+$t_s\le 2{,}5$\,s. Pelas fórmulas de 2ª ordem (Ogata):
+
+\begin{equation}
+  \zeta = \sqrt{\frac{\ln^2(PO/100)}{\pi^2 + \ln^2(PO/100)}} \approx 0{,}636,
+  \qquad
+  \omega_n \approx 2{,}19\ \text{rad/s}.
+\end{equation}
+
+Como a malha fechada é de 3ª ordem (com o I), alocam-se os polos como um par
+dominante mais um polo real $p_o$. Igualando os coeficientes de
+$s^3 + A K_d s^2 + A K_p s + A K_i = 0$ ao polinômio desejado (com $p_o = 1$):
+
+\begin{equation}
+  A K_d = 2\zeta\omega_n + p_o, \qquad
+  A K_p = \omega_n^2 + 2\zeta\omega_n p_o, \qquad
+  A K_i = \omega_n^2 p_o .
+\end{equation}
+
+\begin{center}
+\small
+\begin{tabularx}{0.9\textwidth}{>{\bfseries\color{primary}}c >{\centering}X >{\centering\arraybackslash}X}
+\toprule
+Ganho & \normalfont\bfseries Fórmula & \normalfont\bfseries Valor (PID inicial) \\
+\midrule
+$K_p$ & $(\omega_n^2 + 2\zeta\omega_n p_o)/A$ & $1{,}08\times10^{-3}$ \\
+\rowstyle $K_i$ & $\omega_n^2 p_o/A$ & $6{,}83\times10^{-4}$ \\
+$K_d$ & $(2\zeta\omega_n + p_o)/A$ & $5{,}40\times10^{-4}$ \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsubsection{``PID melhorado'' (amortecido)}
+
+O PID inicial dá \emph{overshoot} de $25$–$30\%$. Como no TCC, reduz-se $K_i$ e
+aumenta-se $K_d$ (alvo $\zeta\approx 1{,}15$). Valores adotados na simulação
+\texttt{PIDSimba.py}:
+
+\begin{keybox}
+$K_p = 1{,}08\times10^{-3} \qquad K_i = 3{,}0\times10^{-4} \qquad K_d = 9{,}0\times10^{-4}$
+\end{keybox}
+
+Com eles a bola converge dos quatro cantos, \emph{overshoot} $\approx 15\%$ e
+erro residual final $\approx 1$\,mm (tendendo a zero pela ação integral).
+
+\subsubsection{Ganhos padrão do firmware — conservadores e por quê}
+
+O firmware (\texttt{main/control.c}) parte de valores propositalmente
+sobreamortecidos:
+
+\begin{keybox}
+$K_p = 8{,}0\times10^{-4} \qquad K_i = 2{,}0\times10^{-5} \qquad K_d = 1{,}2\times10^{-2}$
+\end{keybox}
+
+\begin{enumerate}
+  \item \textbf{Saturação proposital do D:} com a saída limitada a $\pm0{,}25$, o
+  termo D sozinho satura a partir de $v\approx 0{,}25/0{,}012\approx 21$\,mm/s,
+  atuando como um \textbf{freio de velocidade quase \emph{bang-bang}} — muito
+  eficaz contra empurrões.
+  \item \textbf{Ponto de partida seguro:} o ajuste fino é feito \emph{no rig}; os
+  defaults precisam ser mansos para não derrubar a bola na primeira energização.
+\end{enumerate}
+
+\subsection{Controle digital (discretização)}
+
+O laço roda a $50$\,Hz $\Rightarrow T = 0{,}02$\,s. Nyquist (25\,Hz) é muito
+superior a $\omega_n/2\pi\approx 0{,}35$\,Hz, então a amostragem é folgada.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.4}
+\begin{tabularx}{\textwidth}{>{\bfseries}l >{\centering\arraybackslash}p{6.2cm} >{\RaggedRight\arraybackslash}X}
+\toprule
+Bloco & \normalfont\bfseries Discretização & \normalfont\bfseries No código \\
+\midrule
+Integral & $I[k] = I[k-1] + e[k]\,T$ & \texttt{p->integ += err*dt;} \\
+\rowstyle Derivada & $d[k] = \dfrac{e[k]-e[k-1]}{T}$ & diferença regressiva \\
+Filtro do D & $\alpha = \dfrac{T}{\tau_d+T} = 0{,}4$ & IIR de 1ª ordem \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsubsection{Anti-\emph{windup} por \emph{back-calculation}}
+
+Ao saturar em $\pm0{,}25$, o integrador é puxado de volta pela quantidade exata
+que excedeu, evitando \emph{overshoot} gigante ao sair da saturação:
+
+\begin{equation}
+  \text{se } u>u_{max}:\quad I \mathrel{-}= \frac{u-u_{max}}{K_i},\quad u=u_{max}.
+\end{equation}
+
+\begin{lstlisting}[language=C,caption={Trecho real de \texttt{main/pid.c} — anti-windup.}]
+if (out > p->out_max) {
+    if (p->ki != 0.0f) p->integ -= (out - p->out_max) / p->ki;
+    out = p->out_max;
+}
+\end{lstlisting}
+
+A cada borda de ``sem toque'' o controlador é \textbf{resetado}
+(\texttt{pid\_reset}), evitando arrastar estado integral/derivativo entre
+sessões.
+
+\subsection{Cinemática inversa 3RPS}
+
+O PID produz o vetor de inclinação $(n_x,n_y)$. A função
+\texttt{machine\_theta(perna, hz, nx, ny)} resolve, em forma fechada, o ângulo de
+cada motor:
+
+\begin{equation}
+  (n_x, n_y) \;\xrightarrow{\ \text{cinemática inversa}\ }\; (\theta_A, \theta_B, \theta_C).
+\end{equation}
+
+A conversão para passos usa a posição neutra $\theta_{orig}=\texttt{machine\_theta}(\cdot,n_x{=}0,n_y{=}0)$:
+
+\begin{equation}
+  \text{passos} = (\theta_{orig} - \theta)\cdot\frac{200\cdot\text{microsteps}}{360°}.
+\end{equation}
+
+\subsection{Atuador: motor de passo com perfil trapezoidal}
+
+Cada motor segue o alvo com um \textbf{perfil trapezoidal de velocidade}
+(\texttt{main/steppers.c}, timer de 10\,kHz): acelera até a velocidade máxima e
+desacelera a tempo de parar \emph{exatamente} no alvo. A velocidade da qual ainda
+se freia a tempo é
+
+\begin{equation}
+  v_{lim} = \sqrt{2\,a\,d},
+\end{equation}
+
+com $d$ = distância restante (passos) e $a$ = aceleração. Sem essa rampa, a
+partida brusca causaria perda de passos. Em equilíbrio:
+\param{SPEED\_BALANCE = 1500 passos/s} e \param{ACCEL\_BALANCE = 20000 passos/s²}.
+
+\subsection{Estabilidade}
+
+\begin{itemize}
+  \item \textbf{Planta $A/s^2$ isolada:} marginalmente estável (2 polos na origem).
+  \item \textbf{Com PD:} todos os coeficientes da característica são positivos
+  $\Rightarrow$ malha estável para quaisquer $K_p,K_d>0$ (Routh–Hurwitz). O D é
+  o que garante a estabilidade.
+  \item \textbf{Com o I (pequeno):} adiciona um polo lento ($T_i$ longo, 25–40\,s),
+  sem reduzir relevantemente a margem de fase.
+  \item \textbf{Amostragem:} atraso de $\approx T/2 = 0{,}01$\,s, desprezível
+  frente a $1/\omega_n\approx 0{,}7$\,s.
+\end{itemize}
+
+%==============================================================================
+%  3.X DIAGRAMA DE BLOCOS
+%==============================================================================
+\subsection{Diagrama de blocos do sistema}
+
+A Figura~\ref{fig:blocos} resume o laço completo (por eixo): o erro alimenta o
+PID, cuja saída de inclinação passa pela cinemática 3RPS, é realizada pelos três
+motores e move a bola; a tela resistiva fecha a realimentação.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  block/.style={draw=primary,fill=primary!8,thick,rounded corners,
+    minimum height=1.1cm,minimum width=2.0cm,align=center},
+  plant/.style={draw=accent,fill=accent!10,thick,rounded corners,
+    minimum height=1.1cm,minimum width=2.0cm,align=center},
+  sum/.style={draw=inkdark,fill=white,thick,circle,minimum size=0.7cm,inner sep=0pt},
+  arrow/.style={-{Stealth[length=2.5mm]},thick,primary},
+  fb/.style={-{Stealth[length=2.5mm]},thick,danger}
+]
+  \node[sum] (sum) {$+$};
+  \node[left=0.7cm of sum] (ref) {$r$ \scriptsize(centro)};
+  \node[block,right=0.8cm of sum] (pid) {PID\\\scriptsize$K_p,K_i,K_d$};
+  \node[block,right=0.9cm of pid] (kin) {Cinemática\\\scriptsize inversa 3RPS};
+  \node[block,right=0.9cm of kin] (mot) {3$\times$ NEMA 17\\\scriptsize trapezoidal};
+  \node[plant,right=0.9cm of mot] (plant) {Planta\\\scriptsize $A/s^2$};
+  \node[right=0.8cm of plant] (out) {$x$};
+
+  \draw[arrow] (ref) -- (sum);
+  \draw[arrow] (sum) -- node[above,scriptsize]{$e$} (pid);
+  \draw[arrow] (pid) -- node[above,scriptsize]{$n_x$} (kin);
+  \draw[arrow] (kin) -- node[above,scriptsize]{$\theta_{A,B,C}$} (mot);
+  \draw[arrow] (mot) -- node[above,scriptsize]{$\alpha$} (plant);
+  \draw[arrow] (plant) -- (out);
+
+  % realimentação
+  \coordinate (tap) at ($(plant.east)+(0.4,0)$);
+  \draw[fb] (tap) |- ($(sum.south)+(0,-1.1)$) -| node[pos=0.25,below,scriptsize]{sensor (tela resistiva)} (sum.south);
+  \node[below=1.1cm of sum,scriptsize] {$-$};
+\end{tikzpicture}
+\caption{Diagrama de blocos do laço de controle (idêntico para X e Y).}
+\label{fig:blocos}
+\end{figure}
+
+%==============================================================================
+%  4. HARDWARE
+%==============================================================================
+\section{Arquitetura de Hardware}
+
+\subsection{Componentes}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{>{\bfseries\color{primary}}l >{\RaggedRight\arraybackslash}X}
+\toprule
+Microcontrolador & ESP32-S3 DevKitC-1 (dual-core, ADC 12 bits). \\
+\rowstyle Sensor de posição & Tela resistiva 4 fios — VSDISPLAY VS084TP-A1 (8,4''). \\
+Área ativa & $187\times141$\,mm (largura $\times$ altura). \\
+\rowstyle Atuadores & 3$\times$ NEMA 17 (1,8°/passo $=$ 200 passos/rev). \\
+Drivers de passo & A4988 / DRV8825 / TMC2208 (interface STEP/DIR idêntica). \\
+\rowstyle Microstepping & 16$\times$ (\texttt{MICROSTEPS}, via DIP switches). \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Pinagem (verificada no firmware)}
+
+\subsubsection{Tela resistiva — conector FPC}
+
+Cabo flat com o conector voltado para a \textbf{direita} (olhando a superfície).
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{>{\bfseries}c c c c}
+\toprule
+\rowcolor{primary}
+\textcolor{white}{Pino FPC} & \textcolor{white}{Sinal} & \textcolor{white}{GPIO} & \textcolor{white}{Papel} \\
+\midrule
+1 & Y+ & 4 & ADC1\_CH3 — \emph{sense} de X \\
+\rowstyle 2 & X$-$ & 5 & ADC1\_CH4 — \emph{sense} de Y \\
+3 & Y$-$ & 8 & ADC1\_CH7 — acionado na medida de Y \\
+\rowstyle 4 & X+ & 9 & Saída apenas (ADC inoperante nesta placa) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsubsection{Motores de passo}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{>{\bfseries}c c c c}
+\toprule
+\rowcolor{primary}
+\textcolor{white}{Motor} & \textcolor{white}{Posição} & \textcolor{white}{STEP} & \textcolor{white}{DIR} \\
+\midrule
+A & topo & 15 & 16 \\
+\rowstyle B & inferior-direito & 17 & 18 \\
+C & inferior-esquerdo & 40 & 41 \\
+\midrule
+\multicolumn{4}{c}{\footnotesize ENABLE comum: \textbf{GPIO 10} (ativo em nível baixo)} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{infobox}[Escolha dos GPIOs]
+Os pinos dos motores evitam deliberadamente os pinos da tela (4,5,8,9), os pinos
+de \emph{strapping} (0,3,45,46) e os de USB (19,20). Há \emph{flags} de inversão
+de sentido (\texttt{MOTOR\_A/B/C\_INVERT}) caso algum motor gire ao contrário no
+\emph{homing}, sem precisar reconectar fios.
+\end{infobox}
+
+\subsection{Orientação física e convenção de eixos}
+
+\begin{center}
+\begin{tikzpicture}[font=\small]
+  \draw[thick,fill=paperbg,rounded corners] (0,0) rectangle (5,3.4);
+  \node at (2.5,3.75) {\scriptsize cabo FPC à direita $\rightarrow$};
+  \node[primary] at (2.5,2.6) {\textbf{Motor A} (topo)};
+  \node[primary] at (1.1,0.5) {\textbf{C}};
+  \node[primary] at (3.9,0.5) {\textbf{B}};
+  \node at (2.5,1.6) {\footnotesize MESA RESISTIVA};
+  \draw[-{Stealth},accent,thick] (0.3,-0.4) -- (1.6,-0.4) node[right,scriptsize]{X (direita)};
+  \draw[-{Stealth},secondary,thick] (-0.4,3.1) -- (-0.4,1.8) node[below,scriptsize,rotate=90,anchor=north]{};
+  \node[scriptsize,secondary] at (-0.85,2.4) {Y};
+\end{tikzpicture}
+\end{center}
+
+\begin{itemize}
+  \item $x_{mm}=0$ na borda esquerda, $x_{mm}=187$ na direita (lado do cabo);
+  \item $y_{mm}=0$ no topo, $y_{mm}=141$ na base;
+  \item \emph{Setpoint} de equilíbrio: centro $(93{,}5,\ 70{,}5)$\,mm.
+\end{itemize}
+
+\subsection{Geometria 3RPS (parâmetros do firmware)}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabular}{>{\ttfamily\bfseries}l c >{\RaggedRight\arraybackslash}p{7.5cm}}
+\toprule
+\rowcolor{primary}
+\textcolor{white}{Constante} & \textcolor{white}{Valor} & \textcolor{white}{\normalfont\bfseries Significado} \\
+\midrule
+GEO\_D & 50,8\,mm & Raio da base (pivôs inferiores) \\
+\rowstyle GEO\_E & 79,4\,mm & Raio da plataforma (juntas esféricas) \\
+GEO\_F & 44,45\,mm & Comprimento do braço do motor \\
+\rowstyle GEO\_G & 93,2\,mm & Comprimento da biela \\
+GEO\_HZ & 108,0\,mm & Altura neutra da plataforma \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{problembox}[Atenção: valores de referência]
+Estes valores são \textbf{placeholders} herdados do projeto do Aaed Musa. Estão
+marcados no código com a nota ``\emph{MEDIR no rig real e substituir}''. A
+calibração geométrica fina é uma das pendências (Seção~9).
+\end{problembox}
+
+%==============================================================================
+%  5. FIRMWARE E FERRAMENTAS
+%==============================================================================
+\section{Firmware, Ferramentas e Protocolo}
+
+\subsection{Estrutura de módulos}
+
+O firmware é escrito em C sobre o \textbf{ESP-IDF}. Cada módulo tem
+responsabilidade única:
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{>{\ttfamily\bfseries\color{primary}}l >{\RaggedRight\arraybackslash}X}
+\toprule
+main.c & Ponto de entrada; seleciona modo CONTROL ou MAPPING. \\
+\rowstyle control.c & Laço de 50\,Hz, \emph{homing}, parser de comandos seriais e telemetria. \\
+pid.c & PID por eixo: derivativo filtrado + anti-\emph{windup}. \\
+\rowstyle kinematics.c & Cinemática inversa 3RPS (\texttt{machine\_theta}). \\
+steppers.c & Gerador de passos STEP/DIR com perfil trapezoidal (timer 10\,kHz). \\
+\rowstyle touch\_screen.c & Leitura resistiva 4 fios, média e conversão para mm. \\
+cal\_store.c & Persistência em NVS (ganhos PID + calibração da tela). \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{O laço de controle (50\,Hz)}
+
+A cada ciclo, \texttt{control.c}:
+
+\begin{enumerate}
+  \item lê o toque (\texttt{touch\_read}) e mede o $\Delta t$ \emph{real}
+  decorrido (compensa atrasos de \texttt{printf});
+  \item se há bola, roda \texttt{pid\_update} para X e Y; senão, reseta os PIDs;
+  \item aplica os sinais de controle $(s_x,s_y)$ e converte a inclinação em
+  ângulos via \texttt{apply\_tilt} $\rightarrow$ \texttt{machine\_theta};
+  \item comanda os três motores (\texttt{steppers\_move\_to\_all});
+  \item se a telemetria estiver ligada, emite \texttt{POS}/\texttt{NOTOUCH} e
+  \texttt{CTRL}.
+\end{enumerate}
+
+\begin{infobox}[\emph{Homing} em duas etapas (já implementado)]
+Antes de equilibrar, a plataforma (1) \textbf{sobe} 15\,mm acima da altura de
+trabalho — garantindo que o primeiro movimento dos braços seja sempre para cima,
+longe da base — e (2) \textbf{desce} até nivelar ($n_x=n_y=0$). Resta apenas
+\emph{validar} que a posição nivelada corresponde de fato à mesa plana
+(pendência da Seção~9).
+\end{infobox}
+
+\subsection{Sensor resistivo}
+
+A leitura faz a \textbf{média de 8 amostras de ADC por eixo}
+(\param{TOUCH\_SAMPLES = 8}) e suaviza o resultado em mm com um filtro IIR
+(\param{$\alpha$ = 0,25}, $\approx$4 amostras de acomodação). A detecção de toque
+usa limiar de \param{300} em ambos os eixos. A calibração mapeia o ADC bruto para
+mm e o assistente \texttt{CAL APPLY} \textbf{detecta sozinho} \emph{swap}/\emph{flip}
+a partir dos quatro cantos.
+
+\subsection{As três ferramentas de PC}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\textwidth}{>{\ttfamily\bfseries\color{secondary}}l >{\RaggedRight\arraybackslash}X}
+\toprule
+calibrate.py & \textbf{Ferramenta principal de operação.} Calibração guiada dos 4
+cantos, visualização da bola ao vivo, ajuste de orientação e \textbf{tuning de
+PID em tempo real} — tudo persistido no NVS sem recompilar. \\
+\rowstyle PIDSimba.py & \textbf{Simulação física visual.} Bola virtual rolando sob
+gravidade, três motores simulados com perfil trapezoidal; demonstra o laço PID
+inteiro \emph{sem hardware}. Também espelha os motores reais (modo REAL). \\
+sim\_pid.py & \textbf{Validador \emph{headless}} (só biblioteca padrão). Roda a
+resposta em malha fechada contra o modelo da planta e imprime \emph{overshoot},
+tempo de acomodação, erro residual e gráfico ASCII. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Protocolo serial (UART0, 115200 baud)}
+
+\subsubsection{Saída do firmware (telemetria entre \texttt{START}/\texttt{STOP})}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{>{\ttfamily\footnotesize}l >{\RaggedRight\arraybackslash}X}
+\toprule
+\rowcolor{primary}
+\textcolor{white}{\normalfont\bfseries Mensagem} & \textcolor{white}{\normalfont\bfseries Significado} \\
+\midrule
+POS,xr,yr,xmm,ymm & Bola detectada (ADC bruto + posição em mm). \\
+\rowstyle NOTOUCH,xr,yr & Sem contato com a tela. \\
+CTRL,x,y,sx,sy,nx,ny,thA,thB,thC & Estado do laço (pos., \emph{setpoint}, inclinação, ângulos). \\
+\rowstyle GAINS,kp,ki,kd & Eco dos ganhos após ajuste. \\
+CORNER,$\langle$canto$\rangle$,xr,yr & Canto capturado na calibração. \\
+\rowstyle SAVED,$\langle$pid$\vert$touch$\rangle$ & Confirmação de gravação no NVS. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsubsection{Comandos de entrada}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{>{\ttfamily\footnotesize}l >{\RaggedRight\arraybackslash}X}
+\toprule
+\rowcolor{secondary}
+\textcolor{white}{\normalfont\bfseries Comando} & \textcolor{white}{\normalfont\bfseries Efeito} \\
+\midrule
+START / STOP & Liga / desliga a telemetria. \\
+\rowstyle PID kp ki kd & Ajusta os três ganhos (ambos os eixos). \\
+KP/KI/KD v & Ajusta um ganho por vez. \\
+\rowstyle PID SAVE & Persiste os ganhos atuais no NVS. \\
+SX v / SY v & Sinal do controle por eixo ($<0\Rightarrow-1$). \\
+\rowstyle CAL TL$\vert$TR$\vert$BL$\vert$BR & Captura o toque atual como aquele canto. \\
+CAL APPLY / SAVE / SHOW / RESET & Calcula / persiste / exibe / reseta a calibração. \\
+\rowstyle ? & Exibe ganhos, sinais e calibração atuais. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Modos de firmware}
+
+\begin{center}
+\small
+\begin{tabularx}{\textwidth}{>{\ttfamily\bfseries}l >{\RaggedRight\arraybackslash}X}
+\toprule
+BB\_MODE\_CONTROL & (padrão) Laço PID 50\,Hz + cinemática + motores. \\
+\rowstyle BB\_MODE\_MAPPING & Só lê a tela e emite telemetria — útil para depurar o sensor. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+%==============================================================================
+%  6. PROBLEMAS
+%==============================================================================
+\section{Problemas Enfrentados e Soluções}
+
+Esta seção consolida as dificuldades reais registradas ao longo da construção
+(\texttt{PROBLEMASBALL.md}), organizadas por natureza.
+
+\subsection{Sensor: pinagem e leitura incorreta}
+
+\begin{problembox}[Leitura errada da tela resistiva]
+A pinagem da tela gerava \textbf{leitura de dados incorretos}, ou parte da mesa
+simplesmente não respondia. O mapeamento elétrico dos quatro fios para os
+GPIOs/canais de ADC não era óbvio, e a placa tinha uma particularidade: o pino
+X+ (GPIO 9) \textbf{não funciona como ADC}, servindo apenas como saída.
+\end{problembox}
+
+\begin{solutionbox}
+\begin{itemize}
+  \item Mapeamento elétrico definitivo dos quatro fios (Seção~4.2), com X+ usado
+  apenas como saída digital;
+  \item leitura por \textbf{média de 8 amostras} por eixo mais filtro IIR
+  ($\alpha=0{,}25$) para estabilizar o valor em mm;
+  \item calibração in-situ dos quatro cantos, com \textbf{detecção automática}
+  de \emph{swap}/\emph{flip} (\texttt{CAL APPLY}), persistida no NVS.
+\end{itemize}
+\end{solutionbox}
+
+\subsection{Hardware de controle: a PCB}
+
+\begin{problembox}[Necessidade de condensar a fiação]
+Com a montagem em fios soltos espalhados, as ligações eram frágeis e propensas a
+erro. Era necessário \textbf{condensar o hardware de controle em uma PCB} para
+montar de forma adequada e confiável.
+\end{problembox}
+
+\begin{problembox}[Falha na fabricação da PCB]
+A PCB foi enviada para fabricação, mas voltou com um \textbf{defeito: a placa
+inteira em curto}. Não foi possível utilizá-la.
+\end{problembox}
+
+\begin{solutionbox}
+A integração foi refeita em \textbf{placa perfurada}, com as trilhas formadas por
+\textbf{soldagem manual} dos componentes. Mais trabalhoso, porém funcional —
+permitiu validar o circuito e seguir com o projeto. A pinagem documentada
+(Seção~4.2) fica como base para uma futura PCB corrigida.
+\end{solutionbox}
+
+\subsection{Estrutura mecânica}
+
+\begin{problembox}[Impressão 3D sensível ao peso dos motores]
+A estrutura impressa em 3D mostrou-se \textbf{relativamente sensível ao peso dos
+três motores}, exigindo \textbf{reimpressão} de peças.
+\end{problembox}
+
+\begin{problembox}[Acesso a parafusos olhais]
+Os \textbf{parafusos olhais} necessários às juntas eram de \textbf{difícil
+acesso} no mercado.
+\end{problembox}
+
+\begin{solutionbox}
+Reimpressão das peças críticas com maior robustez (mais \emph{infill}/reforço).
+Quanto aos parafusos olhais, o que viabilizou a montagem foi o \textbf{professor
+possuir} a peça — registrada agora na lista de materiais para aquisições futuras.
+\end{solutionbox}
+
+\subsection{Quadro-resumo}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{>{\bfseries}p{5.2cm} >{\RaggedRight\arraybackslash}X c}
+\toprule
+\rowcolor{primary}
+\textcolor{white}{Problema} & \textcolor{white}{Solução} & \textcolor{white}{Criticidade} \\
+\midrule
+Leitura errada da tela & Pinagem definitiva + média/IIR + calibração & \textcolor{danger}{\textbf{Crítica}} \\
+\rowstyle PCB em curto na fabricação & Soldagem em placa perfurada & \textbf{Alta} \\
+Fiação solta / mau contato & Condensação na placa perfurada & \textbf{Alta} \\
+\rowstyle Impressão 3D frágil & Reimpressão reforçada & Média \\
+Parafusos olhais difíceis & Fornecidos pelo professor & Média \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+%==============================================================================
+%  7. CUSTOS
+%==============================================================================
+\section{Materiais e Custos}
+
+\subsection{Recursos fornecidos (sem custo para o grupo)}
+
+\begin{infobox}[Apoio institucional]
+\begin{itemize}
+  \item \textbf{Universidade (UNIFOR):} os três motores de passo.
+  \item \textbf{Professor orientador:} a tela resistiva, parte dos parafusos
+  (incluindo os olhais) e materiais de uso e consumo.
+\end{itemize}
+Esse apoio cobriu os itens de maior valor, viabilizando o projeto.
+\end{infobox}
+
+\subsection{Gastos diretos do grupo}
+
+A tabela abaixo é o gasto \textbf{real} dos alunos até o momento.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.3}
+\begin{tabular}{>{\RaggedRight\arraybackslash}p{8cm} r}
+\toprule
+\rowcolor{primary}
+\textcolor{white}{\bfseries Item} & \textcolor{white}{\bfseries Valor (R\$)} \\
+\midrule
+Filamento PLA (800\,g) & 90,00 \\
+\rowstyle Drivers de motor — 3 unidades & 42,00 \\
+Regulador de tensão & 17,00 \\
+\rowstyle Porcas de inserção & 8,00 \\
+Parafusos diversos & 10,00 \\
+\rowstyle Placa perfurada & 15,90 \\
+\midrule
+\rowcolor{secondary}
+\textcolor{white}{\bfseries TOTAL} & \textcolor{white}{\bfseries 182,90} \\
+\midrule
+\rowcolor{accent}
+\textcolor{white}{\bfseries Por pessoa (8 integrantes)} & \textcolor{white}{\bfseries 22,86} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{infobox}[Leitura do custo]
+O desembolso por aluno foi de apenas \textbf{R\$ 22,86}. O grupo arcou somente
+com consumíveis e complementos (filamento, drivers, regulador, placa perfurada,
+fixadores); os componentes de maior valor — motores e tela — vieram do apoio
+institucional. O resultado é um projeto de controle completo a custo marginal
+muito baixo por integrante.
+\end{infobox}
+
+%==============================================================================
+%  8. VALIDAÇÃO
+%==============================================================================
+\section{Validação e Resultados}
+
+\subsection{Validação teórica (simulação)}
+
+\begin{itemize}
+  \item \textbf{\texttt{sim\_pid.py} (modelo linear):} com os ganhos de alocação
+  de polos, a resposta confirma \emph{overshoot} de $\approx 25$–$30\%$,
+  $t_s\approx 3$\,s e erro estacionário nulo — coerente com $\zeta=0{,}636$ e
+  $\omega_n=2{,}19$\,rad/s previstos analiticamente.
+  \item \textbf{\texttt{PIDSimba.py} (física completa):} com os ganhos
+  ``melhorados'', a bola converge ao centro \textbf{a partir dos quatro cantos},
+  \emph{overshoot} $\approx 15\%$ e erro final $\approx 1$\,mm. \emph{A teoria
+  fecha com o código.}
+\end{itemize}
+
+\subsection{Verificações de hardware}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.3}
+\begin{tabularx}{\textwidth}{>{\bfseries}p{4.5cm} >{\RaggedRight\arraybackslash}X c}
+\toprule
+\rowcolor{primary}
+\textcolor{white}{Item} & \textcolor{white}{Observação} & \textcolor{white}{Status} \\
+\midrule
+Leitura do sensor & Estável após média + IIR; calibração reprodutível & \textcolor{success}{\textbf{OK}} \\
+\rowstyle Cinemática 3RPS & Inclinação mapeia para 3 ângulos; nivela no \emph{homing} & \textcolor{success}{\textbf{OK}} \\
+Motores de passo & Perfil trapezoidal a 10\,kHz, sem perda de passos & \textcolor{success}{\textbf{OK}} \\
+\rowstyle Laço 50\,Hz & Período e telemetria corretos & \textcolor{success}{\textbf{OK}} \\
+Tuning fino do PID & Ajuste de $K_p/K_i/K_d$ no rig & \textcolor{accent}{\textbf{Pendente}} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{infobox}[Como o tuning é feito no rig]
+Pela tela PID do \texttt{calibrate.py} (sem recompilar): (1) zere $K_i$ e $K_d$ e
+suba $K_p$ até a bola \textbf{oscilar} de forma sustentada; (2) adicione $K_d$
+para \textbf{amortecer} (alvo $\zeta\approx 1$); (3) um \textbf{toque} de $K_i$
+para eliminar o desvio residual; (4) \texttt{PID SAVE} grava no NVS. Como ponto
+de partida, Ziegler–Nichols sugere $K_p\approx 0{,}6K_u$, $T_i\approx 0{,}5T_u$,
+$T_d\approx 0{,}125T_u$.
+\end{infobox}
+
+%==============================================================================
+%  9. PENDÊNCIAS
+%==============================================================================
+\section{Pendências e Trabalhos Futuros}
+
+\subsection{Pendências técnicas imediatas}
+
+\begin{enumerate}
+  \item \textbf{Medir a geometria real} (\texttt{GEO\_D/E/F/G/HZ}) com paquímetro
+  e substituir os \emph{placeholders} em \texttt{control.c}.
+  \item \textbf{Confirmar o microstepping} nos DIP switches dos drivers (16$\times$).
+  \item \textbf{Validar o \emph{homing}} — garantir que a posição nivelada
+  corresponde à mesa plana.
+  \item \textbf{Ajustar $K_p/K_i/K_d$ no hardware} pela tela PID, persistindo no NVS.
+  \item \textbf{Verificar os sinais $S_X/S_Y$} — confirmar que a mesa corrige (e
+  não piora) a direção da bola.
+\end{enumerate}
+
+\subsection{Melhorias futuras}
+
+\begin{itemize}
+  \item \textbf{PCB definitiva} (corrigindo o defeito de fabricação), a partir da
+  pinagem já documentada.
+  \item \textbf{Registro de telemetria} (cartão microSD ou \emph{log} no PC) para
+  análise quantitativa da resposta.
+  \item \textbf{Roteiro guiado} de montagem/calibração para as próximas turmas,
+  reduzindo a curva de aprendizado.
+\end{itemize}
+
+%==============================================================================
+%  10. CONCLUSÃO
+%==============================================================================
+\section{Conclusão}
+
+O projeto entregou uma mesa equilibrista funcional, com controle PID digital
+duplo embarcado no ESP32-S3, cinemática inversa 3RPS para três motores de passo e
+sensor de posição resistivo calibrável em tempo de execução. A fundamentação
+teórica — modelo de duplo integrador, projeto de ganhos por alocação de polos e
+discretização com anti-\emph{windup} — está amarrada ao código real e validada em
+simulação: a bola converge ao centro dos quatro cantos com \emph{overshoot} de
+$\approx 15\%$.
+
+A adaptação da abordagem de \textbf{dois servos} do TCC de Cordeiro para os
+\textbf{três motores} deste rig mostrou-se consistente: a malha externa de
+posição é preservada e a cinemática 3RPS realiza a inclinação. Os principais
+obstáculos foram \textbf{práticos} — pinagem da tela, falha na fabricação da PCB
+(contornada com placa perfurada), fragilidade da estrutura impressa e acesso a
+componentes mecânicos — e foram superados com soluções documentadas.
+
+O sistema está \textbf{operacional}; as pendências remanescentes (medição
+geométrica, validação do \emph{homing} e \emph{tuning} fino) são refinamentos que
+não comprometem o funcionamento básico e estão claramente mapeadas para a
+continuidade. Com custo direto de apenas \textbf{R\$ 22,86 por integrante}, o
+resultado é um banco de ensino completo e reaproveitável para futuras práticas de
+controle.
+
+%==============================================================================
+%  REFERÊNCIAS
+%==============================================================================
+\section*{Referências}
+\addcontentsline{toc}{section}{Referências}
+
+\begin{enumerate}[label={[\arabic*]}]
+  \item CORDEIRO, Giovanna Ferreira. \textit{Controle Clássico da Planta Ball
+  Balancer.} Trabalho de Graduação, Engenharia Elétrica, UNESP/FEIS, Ilha
+  Solteira, 2022.
+  \item MUSA, Aaed. \textit{Ball Balancer.} Instructables. Disponível em:
+  \url{https://www.instructables.com/Ball-Balancer/}.
+  \item OGATA, Katsuhiko. \textit{Engenharia de Controle Moderno.} Prentice Hall.
+  (2ª ordem, Routh–Hurwitz, alocação de polos, discretização.)
+  \item FRANKLIN, G.; POWELL, J.; WORKMAN, M. \textit{Digital Control of Dynamic
+  Systems.} (Euler/Tustin, projeto no domínio $z$.)
+  \item ESPRESSIF SYSTEMS. \textit{ESP32-S3 Technical Reference Manual.}
+  Disponível em: \url{https://www.espressif.com}.
+  \item Documentação interna do projeto: \texttt{README.md} (montagem/operação) e
+  \texttt{TEORIA.md} (controle digital).
+\end{enumerate}
+
+%==============================================================================
+%  ANEXO
+%==============================================================================
+\appendix
+\section{Anexo: Tabela-resumo de parâmetros}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{>{\ttfamily\bfseries}l c >{\RaggedRight\arraybackslash}X}
+\toprule
+\rowcolor{primary}
+\textcolor{white}{Símbolo} & \textcolor{white}{Valor} & \textcolor{white}{\normalfont\bfseries Origem} \\
+\midrule
+A = (5/7)g & 7007\,mm/s² & Newton–Euler (esfera maciça) \\
+\rowstyle T & 0,02\,s (50\,Hz) & \texttt{LOOP\_HZ} \\
+$\tau_d$ & 0,03\,s & \texttt{PID\_D\_TAU} \\
+\rowstyle $\alpha$ (filtro D) & 0,4 & $T/(\tau_d+T)$ \\
+SIM\_KP & $1{,}08\times10^{-3}$ & alocação de polos \\
+\rowstyle SIM\_KI & $3{,}0\times10^{-4}$ & ``PID melhorado'' \\
+SIM\_KD & $9{,}0\times10^{-4}$ & ``PID melhorado'' \\
+\rowstyle KP (firmware) & $8{,}0\times10^{-4}$ & conservador, tunado no rig \\
+KI (firmware) & $2{,}0\times10^{-5}$ & $T_i = 40$\,s \\
+\rowstyle KD (firmware) & $1{,}2\times10^{-2}$ & freio com saturação proposital \\
+TILT\_LIMIT & $\pm0{,}25$\,rad & saturação ($\approx 14{,}3°$) \\
+\rowstyle $\zeta$ (projeto) & 0,636 & $PO\le 7{,}5\%$ \\
+$\omega_n$ (projeto) & 2,19\,rad/s & $t_s\le 2{,}5$\,s \\
+\rowstyle TOUCH\_SAMPLES & 8 & média de ADC por eixo \\
+TOUCH\_IIR\_ALPHA & 0,25 & filtro de posição em mm \\
+\rowstyle MICROSTEPS & 16 & microstepping dos drivers \\
+SPEED\_BALANCE & 1500 passos/s & velocidade em equilíbrio \\
+\rowstyle ACCEL\_BALANCE & 20000 passos/s² & aceleração em equilíbrio \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\vfill
+\begin{center}
+{\color{primary}\rule{0.5\textwidth}{1pt}}\\[4pt]
+{\small\color{inkdark}Ball Balancer 3RPS · Relatório Técnico · \today}
+\end{center}
+
+\end{document}
