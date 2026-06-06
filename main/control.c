@@ -41,6 +41,11 @@ static const char *TAG = "control";
 #define PRESENCE_ON   4    /* leituras COM toque para ATIVAR  (~40 ms) */
 #define PRESENCE_OFF  14   /* leituras SEM toque para ir IDLE (~140 ms) */
 
+/* Carência no startup: após o homing, a mesa fica NIVELADA por este tempo antes
+ * de permitir o controle. Deixa a leitura da tela estabilizar (o ruído elétrico
+ * do homing desloca o ponto-preso e dava um falso "tem bola" momentâneo). */
+#define STARTUP_GRACE_MS  1500
+
 #define SETPOINT_X_MM    (TOUCH_WIDTH_MM  / 2.0f)
 #define SETPOINT_Y_MM    (TOUCH_HEIGHT_MM / 2.0f)
 
@@ -133,6 +138,10 @@ static volatile bool    s_snap_touched = false;
 /* Telemetria habilitada apenas entre START/STOP */
 static volatile bool    s_telem_enabled = false;
 
+/* Comando ERROR: imprime o erro (distância do centro) a cada 1 s */
+static volatile bool    s_show_error = false;
+static TickType_t       s_err_last   = 0;
+
 /* ── Calibração de cantos da mesa ─────────────────────────────────────────
  *
  * Orientação (cabo flat da tela resistiva à DIREITA, olhando de frente):
@@ -162,11 +171,10 @@ static corner_t s_corners[4];
  */
 typedef enum {
     CAL_IDLE, CAL_WAIT_TL, CAL_WAIT_TR, CAL_WAIT_BR, CAL_WAIT_BL,
-    CAL_WAIT_CENTER, CAL_CONFIRM
+    CAL_CONFIRM
 } cal_state_t;
 static volatile cal_state_t s_cal_state    = CAL_IDLE;
 static volatile bool        s_calibrating  = false;
-static corner_t   s_center;                       /* ponto central (verificação) */
 static int32_t    s_bak_xmn, s_bak_xmx, s_bak_ymn, s_bak_ymx;  /* backup p/ cancelar */
 static int        s_bak_fx, s_bak_fy, s_bak_sw;
 static TickType_t s_cal_live_last = 0;
@@ -186,38 +194,42 @@ static double        s_ellipse_phase = 0.0;
 /* ── Calibração de curso dos motores (modo guiado "STEPPER") ──────────────
  * Você sobe/desce a plataforma de 1 em 1 mm e marca MINIMO (bate na mesa) e
  * MAXIMO (limite do braço). O startup passa a subir->descer->parar no MEIO
- * desse curso, sem forçar. s_work_hz = altura de trabalho efetiva (mm).
+ * desse curso, sem forçar. s_level_steps = offset de repouso (em passos).
  */
+/* STEPPER agora trabalha em PASSOS (não em altura) — assim não satura na
+ * cinemática (geometria placeholder) e você chega ao limite físico real. */
 static volatile bool s_stepper      = false;
-static double        s_jog_hz       = GEO_HZ;   /* altura sendo ajustada (mm) */
-static double        s_work_hz      = GEO_HZ;   /* altura de trabalho efetiva  */
-static double        s_hz_min       = 0.0;
-static double        s_hz_max       = 0.0;
-static bool          s_hz_min_set   = false;
-static bool          s_hz_max_set   = false;
-#define STEPPER_JOG_MM   1.0       /* incremento por SOBE/DESCE */
-#define HZ_ABS_MIN      60.0       /* trava de seguranca (evita NaN/curso absurdo) */
-#define HZ_ABS_MAX     150.0
+static long          s_jog_steps    = 0;    /* posição (passos) sendo ajustada */
+static long          s_level_steps  = 0;    /* offset de repouso/nível (passos) */
+static long          s_step_min     = 0;
+static long          s_step_max     = 0;
+static bool          s_step_min_set = false;
+static bool          s_step_max_set = false;
+#define STEP_JOG        13         /* ~1 mm por SOBE/DESCE (≈12,8 passos/mm) */
+#define STEP_ABS_LIM    1500       /* trava de segurança (passos) */
 
-/* ── Auto-tune de PID por relé (método de Åström–Hägglund) ────────────────
- * "PIDAUTO": a mesa aplica um relé (liga/desliga a inclinação) que faz a bola
- * oscilar em torno do centro. Mede-se o período (Tu) e a amplitude (a) dessa
- * oscilação; daí o ganho crítico Ku = 4h/(π·a). Ziegler–Nichols converte
- * (Ku, Tu) em Kp/Ki/Kd. Sem chutar valores.
- */
-static volatile bool s_pidauto = false;
-static int        s_pa_relay_x, s_pa_relay_y;   /* estado do relé por eixo */
-static int        s_pa_prevsign;                /* sinal anterior do erro X */
-static float      s_pa_peak;                     /* pico |erro X| no meio-ciclo */
-static TickType_t s_pa_last_cross, s_pa_start, s_pa_seen;
-static float      s_pa_sum_half, s_pa_sum_amp;
-static int        s_pa_meas, s_pa_halfcount;
-#define PA_H          0.05f      /* amplitude do relé (rad) — oscilação suave */
-#define PA_HYST       4.0f       /* histerese (mm) — robustez a ruído */
-#define PA_CYCLES     8          /* meio-ciclos medidos */
-#define PA_WARMUP     2          /* descarta os primeiros (transitório) */
-#define PA_SAFE_MM    60.0f      /* aborta se a bola passar disto (diverge/borda) */
-#define PA_TIMEOUT_S  45.0f
+/* ── Auto-tune de PID ADAPTATIVO (aprende balanceando) ────────────────────
+ * "PIDAUTO": o firmware balança a bola normalmente e usa como PONTUAÇÃO o
+ * TEMPO que a bola fica na mesa (quanto mais, melhor). A cada tentativa ele
+ * perturba um ganho (Kp ou Kd) por hill-climbing: se a pontuação melhora,
+ * mantém e segue na mesma direção; se piora, volta e tenta outra. Detecta
+ * quando a bola cai (fim de tentativa) e quando você recoloca (nova tentativa),
+ * convergindo para ganhos que NÃO deixam a bola sair. */
+static volatile bool s_pidauto = false;       /* tuning adaptativo ligado */
+static bool       s_auto_baseline;            /* 1a tentativa = baseline */
+static TickType_t s_auto_tstart;              /* início da tentativa atual */
+static float      s_auto_errsum;              /* soma do erro p/ média */
+static int        s_auto_errn;
+static float      s_best_kp, s_best_ki, s_best_kd, s_best_score;
+static int        s_auto_move;                /* 0..5: kp+ kp- kd+ kd- ki+ ki- */
+static int        s_auto_since;               /* tentativas sem melhora */
+static float      s_auto_step;                /* fator multiplicativo dos ganhos */
+static int        s_auto_trial;               /* contador de tentativas */
+#define AUTO_NMOVES       6       /* kp± kd± ki± */
+#define AUTO_TRIAL_MAX_S  5.0f    /* janela de avaliação de cada conjunto */
+#define AUTO_SETTLE_S     1.5f    /* ignora o transitório de colocar a bola */
+#define AUTO_STEP0        1.25f   /* passo inicial (×/÷ nos ganhos) — gentil */
+#define AUTO_STEP_MIN     1.05f   /* passo mínimo (convergência fina) */
 
 /* ── Impressão de estado ──────────────────────────────────────────────────── */
 
@@ -348,12 +360,32 @@ static void cmd_handle_cal(const char *sub)
 
 /* ── Menu PID (humano) ────────────────────────────────────────────────────── */
 
+static void cmd_print_help(void)
+{
+    printf("=============== COMANDOS ===============\n");
+    printf(" SHOW / HIDDEN   mostra / esconde leituras da tela\n");
+    printf(" ERROR           imprime o erro (dist. do centro) a cada 1s (ERROR OFF)\n");
+    printf(" PID             mostra Kp/Ki/Kd e como mudar\n");
+    printf(" PID <kp> <ki> <kd> ('-' mantem) | KP/KI/KD <v> | PID SAVE\n");
+    printf(" PIDAUTO         auto-tune do PID (oscila a bola)\n");
+    printf(" CAL             calibra a tela (4 cantos + centro)\n");
+    printf(" STEPPER         calibra o curso dos motores (MINIMO/MAXIMO)\n");
+    printf(" ELIPSE          teste: mesa varre uma elipse (PARAR p/ sair)\n");
+    printf(" ZERO            marca ponto morto da tela (acumula) e salva\n");
+    printf(" ZEROCLR         limpa os pontos mortos\n");
+    printf(" SX <v> | SY <v> sinal do controle por eixo (+1/-1)\n");
+    printf(" ?               estado atual (ganhos, sinais, calibracao)\n");
+    printf(" HELP            esta lista\n");
+    printf("========================================\n");
+}
+
 static void cmd_pid_menu(void)
 {
     printf("----------------------------------------------\n");
     printf(" PID atual:  Kp=%.6g   Ki=%.6g   Kd=%.6g\n",
            (double)s_pid_x.kp, (double)s_pid_x.ki, (double)s_pid_x.kd);
-    printf(" Para mudar:  PID <kp> <ki> <kd>\n");
+    printf(" Para mudar:  PID <kp> <ki> <kd>   ('-' mantem o atual)\n");
+    printf("              ex.: PID - 0.5 0.2  (mantem Kp, muda Ki e Kd)\n");
     printf("              KP <v>   |   KI <v>   |   KD <v>\n");
     printf(" Gravar NVS:  PID SAVE\n");
     printf("----------------------------------------------\n");
@@ -365,15 +397,19 @@ static void cal_print_prompt(void)
 {
     switch (s_cal_state) {
     case CAL_WAIT_TL:
-        printf("CAL> [1/5] Bola no canto SUPERIOR-ESQUERDO  -> digite OK\n"); break;
+        printf("CAL> [1/7] Bola no canto SUPERIOR-ESQUERDO  -> digite OK\n"); break;
     case CAL_WAIT_TR:
-        printf("CAL> [2/5] Bola no canto SUPERIOR-DIREITO (lado do cabo) -> OK\n"); break;
+        printf("CAL> [2/7] Bola no canto SUPERIOR-DIREITO (lado do cabo) -> OK\n"); break;
     case CAL_WAIT_BR:
-        printf("CAL> [3/5] Bola no canto INFERIOR-DIREITO (lado do cabo) -> OK\n"); break;
+        printf("CAL> [3/7] Bola no canto INFERIOR-DIREITO (lado do cabo) -> OK\n"); break;
     case CAL_WAIT_BL:
-        printf("CAL> [4/5] Bola no canto INFERIOR-ESQUERDO -> OK\n"); break;
+        printf("CAL> [4/7] Bola no canto INFERIOR-ESQUERDO -> OK\n"); break;
     case CAL_WAIT_CENTER:
-        printf("CAL> [5/5] Bola no CENTRO -> OK   (ou SKIP para pular)\n"); break;
+        printf("CAL> [5/7] Bola no CENTRO -> OK   (ou SKIP para pular)\n"); break;
+    case CAL_WAIT_TC:
+        printf("CAL> [6/7] Bola no CENTRO SUPERIOR (meio de cima) -> OK   (ou SKIP)\n"); break;
+    case CAL_WAIT_BC:
+        printf("CAL> [7/7] Bola no CENTRO INFERIOR (meio de baixo) -> OK   (ou SKIP)\n"); break;
     case CAL_CONFIRM:
         printf("CAL> SALVAR (grava no NVS)  ou  CANCELAR (descarta)\n"); break;
     default: break;
@@ -398,13 +434,15 @@ static void cal_advance(void)
     case CAL_WAIT_TR:     s_cal_state = CAL_WAIT_BR;     break;
     case CAL_WAIT_BR:     s_cal_state = CAL_WAIT_BL;     break;
     case CAL_WAIT_BL:     s_cal_state = CAL_WAIT_CENTER; break;
-    case CAL_WAIT_CENTER:
-        /* Calcula a calibração a partir dos 4 cantos (já validados) */
+    case CAL_WAIT_CENTER: s_cal_state = CAL_WAIT_TC;     break;
+    case CAL_WAIT_TC:     s_cal_state = CAL_WAIT_BC;     break;
+    case CAL_WAIT_BC:
+        /* Calcula a calibração a partir dos 4 cantos (já validados). Os pontos
+         * CENTRO / CENTRO-SUP / CENTRO-INF servem de verificação (veja no LIVE). */
         cmd_cal_apply();   /* aplica ao vivo; imprime CAL,... */
         s_cal_state = CAL_CONFIRM;
-        printf("CAL> Calibracao aplicada. Confira o CENTRO no stream LIVE "
-               "(ideal ~%.0f,%.0f mm).\n",
-               (double)SETPOINT_X_MM, (double)SETPOINT_Y_MM);
+        printf("CAL> Calibracao aplicada. Confira CENTRO/CENTRO-SUP/CENTRO-INF "
+               "no stream LIVE.\n");
         break;
     default: break;
     }
@@ -418,6 +456,8 @@ static void cal_start(void)
                   &s_bak_fx, &s_bak_fy, &s_bak_sw);
     for (int i = 0; i < 4; i++) s_corners[i].valid = false;
     s_center.valid = false;
+    s_tc.valid = false;
+    s_bc.valid = false;
     s_ellipse     = false;        /* nao roda elipse durante a calibracao */
     s_stepper     = false;
     s_pidauto     = false;
@@ -465,8 +505,10 @@ static void cal_step(const char *s)
     }
 
     if (strcmp(s, "SKIP") == 0) {
-        if (s_cal_state == CAL_WAIT_CENTER) {
-            printf("CAL> centro pulado\n");
+        /* os 4 cantos são obrigatórios; centro e centros sup/inf são opcionais */
+        if (s_cal_state == CAL_WAIT_CENTER || s_cal_state == CAL_WAIT_TC ||
+            s_cal_state == CAL_WAIT_BC) {
+            printf("CAL> ponto pulado\n");
             cal_advance();
         } else {
             printf("CAL> este canto e obrigatorio. Coloque a bola e digite OK.\n");
@@ -481,7 +523,9 @@ static void cal_step(const char *s)
         case CAL_WAIT_TR:     ok = cal_capture(&s_corners[COR_TR], "SUP-DIR (TR)"); break;
         case CAL_WAIT_BR:     ok = cal_capture(&s_corners[COR_BR], "INF-DIR (BR)"); break;
         case CAL_WAIT_BL:     ok = cal_capture(&s_corners[COR_BL], "INF-ESQ (BL)"); break;
-        case CAL_WAIT_CENTER: ok = cal_capture(&s_center,         "CENTRO");       break;
+        case CAL_WAIT_CENTER: ok = cal_capture(&s_center,         "CENTRO");        break;
+        case CAL_WAIT_TC:     ok = cal_capture(&s_tc,             "CENTRO-SUP");    break;
+        case CAL_WAIT_BC:     ok = cal_capture(&s_bc,             "CENTRO-INF");    break;
         default: break;
         }
         if (ok) cal_advance();
@@ -503,42 +547,42 @@ static void stepper_set_speeds(float spd, float acc)
 
 static void stepper_print(void)
 {
-    printf("STEPPER> altura ~%.0f mm", s_jog_hz);
-    if (s_hz_min_set) printf("  | MIN=%.0f", s_hz_min);
-    if (s_hz_max_set) printf("  | MAX=%.0f", s_hz_max);
+    printf("STEPPER> pos ~%ld passos (~%.0f mm)", s_jog_steps, (double)s_jog_steps / 12.8);
+    if (s_step_min_set) printf("  | MIN=%ld", s_step_min);
+    if (s_step_max_set) printf("  | MAX=%ld", s_step_max);
     printf("\n");
 }
 
 static void stepper_start(void)
 {
-    s_ellipse    = false;
-    s_pidauto    = false;
-    s_jog_hz     = s_work_hz;
-    s_hz_min_set = false;
-    s_hz_max_set = false;
-    s_stepper    = true;
+    s_ellipse      = false;
+    s_pidauto      = false;
+    s_jog_steps    = s_level_steps;     /* começa na altura de repouso atual */
+    s_step_min_set = false;
+    s_step_max_set = false;
+    s_stepper      = true;
     pid_reset(&s_pid_x);
     pid_reset(&s_pid_y);
     stepper_set_speeds(SPEED_HOME, ACCEL_HOME);   /* devagar, para nao forcar */
-    printf("STEPPER> Calibracao de CURSO dos motores. Mesa NIVELADA, sobe/desce devagar.\n");
-    printf("STEPPER> SOBE (+1mm, ou SIM) | DESCE (-1mm) | MINIMO | MAXIMO | MEIO | SALVAR | CANCELAR\n");
+    printf("STEPPER> Calibracao de CURSO (em passos). Mesa NIVELADA, sobe/desce devagar.\n");
+    printf("STEPPER> SOBE (~1mm, ou SIM) | DESCE | MINIMO | MAXIMO | MEIO | SALVAR | CANCELAR\n");
     stepper_print();
 }
 
 static void stepper_finish(bool save)
 {
     if (save) {
-        s_work_hz = (s_hz_min + s_hz_max) / 2.0;
-        cal_steplim_t lim = { (float)s_hz_min, (float)s_hz_max };
+        s_level_steps = (s_step_min + s_step_max) / 2;
+        cal_steplim_t lim = { (int32_t)s_step_min, (int32_t)s_step_max };
         cal_store_save_steplim(&lim);
-        printf("STEPPER> SALVO. MIN=%.0f  MAX=%.0f  MEIO=%.0f mm. O startup usara esse curso.\n",
-               s_hz_min, s_hz_max, s_work_hz);
+        printf("STEPPER> SALVO. MIN=%ld  MAX=%ld  MEIO=%ld passos. Startup usara esse curso.\n",
+               s_step_min, s_step_max, s_level_steps);
     } else {
         printf("STEPPER> CANCELADO (limites nao alterados).\n");
     }
     s_stepper = false;
     stepper_set_speeds(SPEED_BALANCE, ACCEL_BALANCE);
-    /* o laco leva a mesa para s_work_hz (nivelada) automaticamente */
+    /* o laco leva a mesa para s_level_steps (nivelada) automaticamente */
 }
 
 static void stepper_step(const char *s)
@@ -546,22 +590,22 @@ static void stepper_step(const char *s)
     if (strcmp(s, "CANCELAR") == 0 || strcmp(s, "CANCEL") == 0) { stepper_finish(false); return; }
 
     if (strcmp(s, "SALVAR") == 0 || strcmp(s, "SAVE") == 0) {
-        if (s_hz_min_set && s_hz_max_set && s_hz_min < s_hz_max) stepper_finish(true);
+        if (s_step_min_set && s_step_max_set && s_step_min < s_step_max) stepper_finish(true);
         else printf("STEPPER> defina MINIMO e MAXIMO (com MIN < MAX) antes de SALVAR\n");
         return;
     }
 
     if (strcmp(s, "SOBE") == 0 || strcmp(s, "SUBIR") == 0 ||
         strcmp(s, "SIM")  == 0 || strcmp(s, "S") == 0) {
-        s_jog_hz += STEPPER_JOG_MM;
-        if (s_jog_hz > HZ_ABS_MAX) s_jog_hz = HZ_ABS_MAX;
+        s_jog_steps += STEP_JOG;
+        if (s_jog_steps > STEP_ABS_LIM) s_jog_steps = STEP_ABS_LIM;
         printf("STEPPER> subiu. pode subir mais? SIM | DESCE | MINIMO | MAXIMO | SALVAR\n");
         stepper_print();
         return;
     }
     if (strcmp(s, "DESCE") == 0 || strcmp(s, "DESCER") == 0 || strcmp(s, "D") == 0) {
-        s_jog_hz -= STEPPER_JOG_MM;
-        if (s_jog_hz < HZ_ABS_MIN) s_jog_hz = HZ_ABS_MIN;
+        s_jog_steps -= STEP_JOG;
+        if (s_jog_steps < -STEP_ABS_LIM) s_jog_steps = -STEP_ABS_LIM;
         stepper_print();
         return;
     }
@@ -571,21 +615,21 @@ static void stepper_step(const char *s)
         return;
     }
     if (strcmp(s, "MINIMO") == 0 || strcmp(s, "MIN") == 0) {
-        s_hz_min = s_jog_hz; s_hz_min_set = true;
-        printf("STEPPER> MINIMO marcado em ~%.0f mm (ponto que bate na mesa)\n", s_hz_min);
+        s_step_min = s_jog_steps; s_step_min_set = true;
+        printf("STEPPER> MINIMO marcado em %ld passos (ponto que bate na mesa)\n", s_step_min);
         stepper_print();
         return;
     }
     if (strcmp(s, "MAXIMO") == 0 || strcmp(s, "MAX") == 0) {
-        s_hz_max = s_jog_hz; s_hz_max_set = true;
-        printf("STEPPER> MAXIMO marcado em ~%.0f mm (limite de subida)\n", s_hz_max);
+        s_step_max = s_jog_steps; s_step_max_set = true;
+        printf("STEPPER> MAXIMO marcado em %ld passos (limite de subida)\n", s_step_max);
         stepper_print();
         return;
     }
     if (strcmp(s, "MEIO") == 0) {
-        if (s_hz_min_set && s_hz_max_set) {
-            s_jog_hz = (s_hz_min + s_hz_max) / 2.0;
-            printf("STEPPER> indo ao MEIO ~%.0f mm\n", s_jog_hz);
+        if (s_step_min_set && s_step_max_set) {
+            s_jog_steps = (s_step_min + s_step_max) / 2;
+            printf("STEPPER> indo ao MEIO %ld passos\n", s_jog_steps);
         } else {
             printf("STEPPER> defina MIN e MAX primeiro\n");
         }
@@ -595,106 +639,114 @@ static void stepper_step(const char *s)
     printf("STEPPER> use: SOBE | DESCE | MINIMO | MAXIMO | MEIO | SALVAR | CANCELAR\n");
 }
 
-/* ── Auto-tune de PID por relé (Åström–Hägglund + Ziegler–Nichols) ────────── */
+/* ── Auto-tune de PID ADAPTATIVO (hill-climbing por tempo na mesa) ────────── */
 
-static void pidauto_finish(void)
+static float auto_clampf(float v, float lo, float hi)
 {
-    s_pidauto = false;
-    if (s_pa_meas <= 0) { printf("PIDAUTO> sem medidas — nada alterado.\n"); return; }
-    float Tu = 2.0f * (s_pa_sum_half / (float)s_pa_meas);   /* período completo (s) */
-    float a  = s_pa_sum_amp / (float)s_pa_meas;             /* amplitude (mm) */
-    if (a < 1.0f || Tu < 0.05f) {
-        printf("PIDAUTO> oscilacao fraca (amp=%.1fmm, Tu=%.2fs) — nada alterado.\n",
-               (double)a, (double)Tu);
-        return;
-    }
-    float Ku = 4.0f * PA_H / (3.14159265f * a);             /* ganho critico (rad/mm) */
-    float kp = 0.6f   * Ku;                                 /* Ziegler–Nichols PID */
-    float ki = 1.2f   * Ku / Tu;
-    float kd = 0.075f * Ku * Tu;
-    cmd_set_all_gains(kp, ki, kd);
-    printf("PIDAUTO> RESULTADO: Ku=%.4g  Tu=%.3fs\n", (double)Ku, (double)Tu);
-    printf("PIDAUTO> Ziegler-Nichols -> Kp=%.4g  Ki=%.4g  Kd=%.4g  (APLICADOS)\n",
-           (double)kp, (double)ki, (double)kd);
-    printf("PIDAUTO> teste a bola; se gostar, grave com 'PID SAVE'.\n");
-    printf("PIDAUTO> se oscilar demais: KD <maior>  ou  KI <menor>.\n");
+    return (v < lo) ? lo : ((v > hi) ? hi : v);
 }
 
-static void pidauto_start(void)
+/* Define os ganhos vivos = melhor + perturbação do movimento atual. */
+static void auto_propose(void)
+{
+    float kp = s_best_kp, ki = s_best_ki, kd = s_best_kd;
+    if (!s_auto_baseline) {
+        float up = s_auto_step, dn = 1.0f / s_auto_step;
+        switch (s_auto_move) {
+        case 0: kp *= up; break;
+        case 1: kp *= dn; break;
+        case 2: kd *= up; break;
+        case 3: kd *= dn; break;
+        case 4: ki = (ki < 1.0e-5f) ? 2.0e-5f : ki * up; break;   /* ki+ (sai do zero) */
+        case 5: ki = ki * dn; if (ki < 1.0e-5f) ki = 0.0f; break; /* ki- (pode zerar) */
+        }
+    }
+    kp = auto_clampf(kp, 1.0e-4f, 1.5e-2f);
+    kd = auto_clampf(kd, 1.0e-3f, 6.0e-2f);
+    ki = auto_clampf(ki, 0.0f,    1.0e-3f);
+    cmd_set_all_gains(kp, ki, kd);
+}
+
+static void auto_trial_begin(void)
+{
+    s_auto_tstart = xTaskGetTickCount();
+    s_auto_errsum = 0.0f;
+    s_auto_errn   = 0;
+}
+
+/* Fecha a tentativa: pontua (tempo na mesa + centragem), atualiza o melhor por
+ * hill-climbing e propõe os próximos ganhos. fell=true se a bola caiu. */
+static void auto_trial_end(bool fell)
+{
+    float t = (float)(xTaskGetTickCount() - s_auto_tstart) *
+              (float)portTICK_PERIOD_MS / 1000.0f;
+    float meanerr = (s_auto_errn > 0) ? (s_auto_errsum / (float)s_auto_errn) : 99.0f;
+
+    /* PONTUAÇÃO (maior = melhor):
+     *  - SOBREVIVEU a janela -> score = -erro_medio (menos erro = melhor).
+     *  - CAIU -> fortemente penalizado (sempre pior que qualquer sobrevivente),
+     *    ordenado por quanto durou. Assim o sinal é o ERRO (contínuo, comparável)
+     *    e não o tempo (ruidoso), e cair nunca é "premiado". */
+    float score = fell ? (-200.0f + 5.0f * t) : (-meanerr);
+    s_auto_trial++;
+
+    float cur_kp = s_pid_x.kp, cur_ki = s_pid_x.ki, cur_kd = s_pid_x.kd;
+    bool improved = (s_best_score <= -1.0e8f) || (score > s_best_score + 0.3f);
+
+    if (improved) {
+        s_best_kp = cur_kp; s_best_ki = cur_ki; s_best_kd = cur_kd;
+        s_best_score = score;
+        s_auto_since = 0;                 /* mantém o mesmo movimento (momentum) */
+        printf("PIDAUTO> #%d %s t=%.1fs err=%.0fmm score=%.1f -> MELHOR  Kp=%.2e Ki=%.2e Kd=%.2e\n",
+               s_auto_trial, fell ? "caiu" : "ok", (double)t, (double)meanerr, (double)score,
+               (double)cur_kp, (double)cur_ki, (double)cur_kd);
+    } else {
+        s_auto_move = (s_auto_move + 1) % AUTO_NMOVES;
+        s_auto_since++;
+        if (s_auto_since >= AUTO_NMOVES) {   /* ciclo completo sem melhora -> passo menor */
+            s_auto_step = 1.0f + (s_auto_step - 1.0f) * 0.6f;
+            if (s_auto_step < AUTO_STEP_MIN) s_auto_step = AUTO_STEP_MIN;
+            s_auto_since = 0;
+        }
+        printf("PIDAUTO> #%d %s t=%.1fs err=%.0fmm score=%.1f (melhor=%.1f) -> tenta outro\n",
+               s_auto_trial, fell ? "caiu" : "ok", (double)t, (double)meanerr,
+               (double)score, (double)s_best_score);
+    }
+    s_auto_baseline = false;
+    auto_propose();
+}
+
+static void auto_start(void)
 {
     if (!s_snap_touched) {
-        printf("PIDAUTO> coloque a bola perto do CENTRO e digite PIDAUTO de novo.\n");
+        printf("PIDAUTO> coloque a bola na mesa e digite PIDAUTO de novo.\n");
         return;
     }
     s_ellipse = false; s_stepper = false;
-    pid_reset(&s_pid_x); pid_reset(&s_pid_y);
-    TickType_t now = xTaskGetTickCount();
-    s_pa_relay_x = s_pa_relay_y = 0;
-    s_pa_prevsign = 0; s_pa_peak = 0.0f;
-    s_pa_last_cross = now; s_pa_start = now; s_pa_seen = now;
-    s_pa_sum_half = 0.0f; s_pa_sum_amp = 0.0f; s_pa_meas = 0; s_pa_halfcount = 0;
+    /* Parte SEMPRE de um baseline AMORTECIDO conhecido (defaults do firmware),
+     * que segura a bola. Assim as perturbações gentis não a derrubam e dá para
+     * medir o erro continuamente — não importa de que ganhos a sessão começou. */
+    s_best_kp = KP; s_best_ki = KI; s_best_kd = KD;
+    s_best_score = -1.0e9f;
+    s_auto_move = 0; s_auto_since = 0; s_auto_step = AUTO_STEP0;
+    s_auto_trial = 0; s_auto_baseline = true;
     s_pidauto = true;
-    printf("PIDAUTO> Auto-tune por rele. A mesa vai OSCILAR a bola de proposito (~%d ciclos).\n",
-           PA_CYCLES);
-    printf("PIDAUTO> Mantenha a bola na mesa. Digite CANCELAR para abortar.\n");
+    pid_reset(&s_pid_x); pid_reset(&s_pid_y);
+    auto_propose();          /* aplica o baseline seguro */
+    auto_trial_begin();      /* cronometra já (a bola pode estar na mesa) */
+    printf("PIDAUTO> Tuning ADAPTATIVO. Parte de ganhos seguros e REFINA sozinho.\n");
+    printf("PIDAUTO> Deixe a bola na mesa — ele testa um ajuste a cada %.0fs sem derrubar.\n",
+           (double)AUTO_TRIAL_MAX_S);
+    printf("PIDAUTO> Quanto MENOR o 'err', melhor. PARAR aplica o melhor; 'PID SAVE' grava.\n");
 }
 
-/* Chamado pelo laço a 50 Hz enquanto s_pidauto. Devolve a inclinação em *nx,*ny. */
-static void pidauto_loop(bool touched, float xmm, float ymm, double *nx, double *ny)
+static void auto_stop(void)
 {
-    TickType_t now = xTaskGetTickCount();
-    *nx = 0.0; *ny = 0.0;
-
-    if (!touched) {
-        if ((now - s_pa_seen) > pdMS_TO_TICKS(1200)) {
-            printf("PIDAUTO> bola perdida — abortado. Recoloque no centro e tente de novo.\n");
-            s_pidauto = false;
-        }
-        return;   /* mesa nivelada enquanto não vê a bola */
-    }
-    s_pa_seen = now;
-
-    float ex = xmm - (float)SETPOINT_X_MM;
-    float ey = ymm - (float)SETPOINT_Y_MM;
-
-    if (fabsf(ex) > PA_SAFE_MM || fabsf(ey) > PA_SAFE_MM) {
-        printf("PIDAUTO> bola foi longe demais (diverge) — abortado.\n");
-        printf("PIDAUTO> se a mesa EMPURRA a bola para fora, inverta: SX 1 e/ou SY 1, e repita.\n");
-        s_pidauto = false;
-        return;
-    }
-    if ((now - s_pa_start) > pdMS_TO_TICKS((int)(PA_TIMEOUT_S * 1000))) {
-        printf("PIDAUTO> tempo esgotado sem oscilacao clara — abortado.\n");
-        s_pidauto = false;
-        return;
-    }
-
-    /* Relé com histerese, realimentação negativa (mesmo sinal do controlador). */
-    if      (ex >  PA_HYST) s_pa_relay_x = +1;
-    else if (ex < -PA_HYST) s_pa_relay_x = -1;
-    if      (ey >  PA_HYST) s_pa_relay_y = +1;
-    else if (ey < -PA_HYST) s_pa_relay_y = -1;
-    *nx = (double)(s_sign_x * PA_H * (float)s_pa_relay_x);
-    *ny = (double)(s_sign_y * PA_H * (float)s_pa_relay_y);
-
-    /* Medição no eixo X: pico e cruzamento por zero do erro. */
-    if (fabsf(ex) > s_pa_peak) s_pa_peak = fabsf(ex);
-    int sgn = (ex > 0.0f) ? 1 : (ex < 0.0f) ? -1 : s_pa_prevsign;
-    if (s_pa_prevsign != 0 && sgn != s_pa_prevsign) {
-        float half = (float)(now - s_pa_last_cross) * (float)portTICK_PERIOD_MS / 1000.0f;
-        s_pa_last_cross = now;
-        s_pa_halfcount++;
-        if (s_pa_halfcount > PA_WARMUP && half > 0.02f) {
-            s_pa_sum_half += half;
-            s_pa_sum_amp  += s_pa_peak;
-            s_pa_meas++;
-            printf("PIDAUTO> %d/%d  meio-periodo=%.2fs  amp=%.1fmm\n",
-                   s_pa_meas, PA_CYCLES, (double)half, (double)s_pa_peak);
-            if (s_pa_meas >= PA_CYCLES) { s_pa_peak = 0.0f; pidauto_finish(); return; }
-        }
-        s_pa_peak = 0.0f;
-    }
-    s_pa_prevsign = sgn;
+    cmd_set_all_gains(s_best_kp, s_best_ki, s_best_kd);
+    s_pidauto = false;
+    printf("PIDAUTO> encerrado. MELHOR Kp=%.3e Ki=%.3e Kd=%.3e (score=%.1f).\n",
+           (double)s_best_kp, (double)s_best_ki, (double)s_best_kd, (double)s_best_score);
+    printf("PIDAUTO> 'PID SAVE' para gravar no NVS.\n");
 }
 
 /* ── Parser de linha serial ───────────────────────────────────────────────── */
@@ -716,14 +768,13 @@ static void cmd_handle(char *s)
         stepper_step(s);
         return;
     }
-    /* Durante o auto-tune, só aceitamos CANCELAR. */
+    /* Durante o auto-tune adaptativo, PARAR encerra (aplica o melhor). */
     if (s_pidauto) {
         if (strcmp(s, "CANCELAR") == 0 || strcmp(s, "CANCEL") == 0 ||
             strcmp(s, "PARAR") == 0) {
-            s_pidauto = false;
-            printf("PIDAUTO> cancelado.\n");
+            auto_stop();
         } else {
-            printf("PIDAUTO> em andamento... CANCELAR para abortar.\n");
+            printf("PIDAUTO> tunando... deixe a bola; PARAR para encerrar.\n");
         }
         return;
     }
@@ -739,6 +790,24 @@ static void cmd_handle(char *s)
              strcmp(s, "STOP") == 0) {
         s_telem_enabled = false;
         printf("TELEM,OFF\n");
+        return;
+    }
+
+    /* HELP -> lista de comandos. */
+    if (strcmp(s, "HELP") == 0 || strcmp(s, "AJUDA") == 0) {
+        cmd_print_help();
+        return;
+    }
+
+    /* ERROR -> liga/desliga a impressão do erro (a cada 1 s). ERROR OFF desliga. */
+    if (strcmp(s, "ERROR OFF") == 0 || strcmp(s, "ERRO OFF") == 0) {
+        s_show_error = false;
+        printf("ERROR,OFF\n");
+        return;
+    }
+    if (strcmp(s, "ERROR") == 0 || strcmp(s, "ERRO") == 0) {
+        s_show_error = !s_show_error;
+        printf("ERROR,%s\n", s_show_error ? "ON" : "OFF");
         return;
     }
 
@@ -761,9 +830,33 @@ static void cmd_handle(char *s)
         return;
     }
 
-    /* PIDAUTO -> auto-tune do PID por rele (oscila a bola e calcula os ganhos). */
+    /* PIDAUTO -> auto-tune adaptativo (balanceia e melhora pelo tempo na mesa). */
     if (strcmp(s, "PIDAUTO") == 0 || strcmp(s, "AUTOPID") == 0) {
-        pidauto_start();
+        auto_start();
+        return;
+    }
+
+    /* ZERO -> adiciona o ponto morto atual à lista e SALVA no NVS (acumula).
+     * ZEROCLR -> limpa todos os pontos. Vale após reiniciar.               */
+    if (strcmp(s, "ZEROCLR") == 0) {
+        touch_clear_baseline();
+        cal_baseline_t b; memset(&b, 0, sizeof(b)); b.count = 0;
+        cal_store_save_baseline(&b);
+        printf("ZERO> todos os pontos mortos limpos (NVS).\n");
+        return;
+    }
+    if (strcmp(s, "ZERO") == 0) {
+        int n = touch_add_baseline();
+        if (n > 0) {
+            cal_baseline_t b; memset(&b, 0, sizeof(b));
+            b.count = (int8_t)touch_get_baselines(b.x, b.y, CAL_BASE_MAX);
+            cal_store_save_baseline(&b);
+            printf("ZERO> ponto morto #%d marcado e salvo (NVS). ZEROCLR para limpar.\n", n);
+        } else if (n == -2) {
+            printf("ZERO> lista cheia (%d). Use ZEROCLR para recomecar.\n", CAL_BASE_MAX);
+        } else {
+            printf("ZERO> sem leitura para marcar agora. Tente de novo.\n");
+        }
         return;
     }
 
@@ -810,14 +903,24 @@ static void cmd_handle(char *s)
         cmd_print_gains();
     }
     /* Ajuste de ganhos PID:
-     *   PID <kp> <ki> <kd>   — ajusta os três de uma vez
+     *   PID <kp> <ki> <kd>   — ajusta os três; um campo '-' MANTÉM o atual
+     *                          (ex.: "PID - 0.5 0.2" mantém Kp, muda Ki e Kd)
      *   KP <v> | KI <v> | KD <v> — ajusta um por vez
      *   ?                    — consulta ganhos e sinais
      *   SX <v> | SY <v>      — sinal do controle por eixo (+1/-1)
      */
-    else if (sscanf(s, "PID %f %f %f", &a, &b, &c) == 3) {
-        cmd_set_all_gains(a, b, c);
-        cmd_print_gains();
+    else if (strncmp(s, "PID ", 4) == 0) {
+        char t1[24], t2[24], t3[24];
+        if (sscanf(s + 4, "%23s %23s %23s", t1, t2, t3) == 3) {
+            float kp = s_pid_x.kp, ki = s_pid_x.ki, kd = s_pid_x.kd;
+            if (strcmp(t1, "-") != 0) kp = strtof(t1, NULL);   /* '-' = mantém */
+            if (strcmp(t2, "-") != 0) ki = strtof(t2, NULL);
+            if (strcmp(t3, "-") != 0) kd = strtof(t3, NULL);
+            cmd_set_all_gains(kp, ki, kd);
+            cmd_print_gains();
+        } else {
+            printf("ERR,uso: PID <kp> <ki> <kd>   ('-' mantem o atual)\n");
+        }
     } else if (sscanf(s, "KP %f", &a) == 1) {
         s_pid_x.kp = a; s_pid_y.kp = a; cmd_print_gains();
     } else if (sscanf(s, "KI %f", &a) == 1) {
@@ -869,23 +972,19 @@ static void cmd_task(void *arg)
 
 /* ── Cinemática → motores ─────────────────────────────────────────────────── */
 
-/* Move os 3 motores para realizar a inclinação (nx,ny) a uma altura hz. */
-static void apply_tilt_hz(double hz, double nx, double ny, double thoff[3])
+/* Versão usual do balanço: inclina pela cinemática (em GEO_HZ) e soma o offset
+ * de repouso s_level_steps (definido pela calibração STEPPER em passos). Assim a
+ * mesa balança em torno do MEIO físico do curso, sem depender da geometria. */
+static void apply_tilt(double nx, double ny, double thoff[3])
 {
     long pos[STEPPER_COUNT];
     for (int i = 0; i < STEPPER_COUNT; i++) {
-        double theta = machine_theta(&s_machine, i, hz, nx, ny);
+        double theta = machine_theta(&s_machine, i, GEO_HZ, nx, ny);
         if (!isfinite(theta)) theta = s_ang_orig;
         thoff[i] = theta;
-        pos[i] = lround((s_ang_orig - theta) * ANG_TO_STEP);
+        pos[i] = s_level_steps + lround((s_ang_orig - theta) * ANG_TO_STEP);
     }
     steppers_move_to_all(pos);
-}
-
-/* Versão usual: usa a altura de trabalho calibrada (s_work_hz). */
-static void apply_tilt(double nx, double ny, double thoff[3])
-{
-    apply_tilt_hz(s_work_hz, nx, ny, thoff);
 }
 
 /* ── Entry point ──────────────────────────────────────────────────────────── */
@@ -924,6 +1023,12 @@ void control_run(void)
                       saved_touch.flip_x, saved_touch.flip_y, saved_touch.swap_xy);
     }
 
+    /* Baselines do ZERO (pontos mortos do painel), se salvos */
+    cal_baseline_t saved_base;
+    if (cal_store_load_baseline(&saved_base) && saved_base.count > 0) {
+        touch_set_baselines(saved_base.count, saved_base.x, saved_base.y);
+    }
+
     steppers_init();
 
     for (int i = 0; i < STEPPER_COUNT; i++) {
@@ -935,32 +1040,27 @@ void control_run(void)
 
     double thoff[3];
 
-    /* Carrega o curso calibrado (STEPPER) do NVS, se existir. */
+    /* Carrega o curso calibrado (STEPPER, em passos) do NVS, se existir. */
     cal_steplim_t lim;
     bool have_lim = cal_store_load_steplim(&lim);
-    if (have_lim && lim.hz_min < lim.hz_max) {
-        s_hz_min = lim.hz_min; s_hz_max = lim.hz_max;
-        s_hz_min_set = s_hz_max_set = true;
-        s_work_hz = (s_hz_min + s_hz_max) / 2.0;
-    } else {
-        s_work_hz = GEO_HZ;     /* sem calibração: comportamento padrão */
-    }
+    if (have_lim && lim.step_min < lim.step_max) {
+        s_step_min = lim.step_min; s_step_max = lim.step_max;
+        s_step_min_set = s_step_max_set = true;
+        s_level_steps = (s_step_min + s_step_max) / 2;
 
-    if (have_lim && lim.hz_min < lim.hz_max) {
-        /* Startup calibrado: SOBE -> DESCE -> para no MEIO, dentro do curso. */
-        ESP_LOGI(TAG, "Startup: curso %.0f..%.0f mm, meio=%.0f",
-                 s_hz_min, s_hz_max, s_work_hz);
-        apply_tilt_hz(s_hz_max,  0.0, 0.0, thoff);  /* sobe ao maximo */
-        steppers_run_to_position_blocking();
-        vTaskDelay(pdMS_TO_TICKS(300));
-        apply_tilt_hz(s_hz_min,  0.0, 0.0, thoff);  /* desce ao minimo */
-        steppers_run_to_position_blocking();
-        vTaskDelay(pdMS_TO_TICKS(300));
-        apply_tilt_hz(s_work_hz, 0.0, 0.0, thoff);  /* para no meio */
-        steppers_run_to_position_blocking();
-        vTaskDelay(pdMS_TO_TICKS(300));
+        /* Startup calibrado: SOBE -> DESCE -> para no MEIO (em passos). */
+        ESP_LOGI(TAG, "Startup: curso %ld..%ld passos, meio=%ld",
+                 (long)s_step_min, (long)s_step_max, (long)s_level_steps);
+        long p[STEPPER_COUNT];
+        p[0]=p[1]=p[2]= s_step_max;   steppers_move_to_all(p);
+        steppers_run_to_position_blocking(); vTaskDelay(pdMS_TO_TICKS(350));
+        p[0]=p[1]=p[2]= s_step_min;   steppers_move_to_all(p);
+        steppers_run_to_position_blocking(); vTaskDelay(pdMS_TO_TICKS(350));
+        p[0]=p[1]=p[2]= s_level_steps; steppers_move_to_all(p);
+        steppers_run_to_position_blocking(); vTaskDelay(pdMS_TO_TICKS(300));
     } else {
         /* Sem calibração de curso: homing antigo (sobe pouco e nivela). */
+        s_level_steps = 0;
         long pos[STEPPER_COUNT];
         for (int i = 0; i < STEPPER_COUNT; i++) {
             double theta_lift = machine_theta(&s_machine, i,
@@ -971,7 +1071,7 @@ void control_run(void)
         steppers_move_to_all(pos);
         steppers_run_to_position_blocking();
         vTaskDelay(pdMS_TO_TICKS(300));
-        apply_tilt(0.0, 0.0, thoff);   /* nivela em s_work_hz (=GEO_HZ) */
+        apply_tilt(0.0, 0.0, thoff);   /* nivela em s_level_steps=0 */
         steppers_run_to_position_blocking();
         vTaskDelay(pdMS_TO_TICKS(300));
     }
@@ -1008,21 +1108,8 @@ void control_run(void)
            MOTOR_A_INVERT, MOTOR_B_INVERT, MOTOR_C_INVERT);
     printf("#  Se um motor subir/descer ao contrário no homing, mude o flag\n");
     printf("# ----------------------------------------------------------------\n");
-    printf("# COMANDOS PELO TERMINAL SERIAL:\n");
-    printf("#   SHOW           -> mostra as leituras da tela (x,y em mm)\n");
-    printf("#   HIDDEN         -> esconde as leituras\n");
-    printf("#   PID            -> mostra Kp/Ki/Kd atuais e como mudar\n");
-    printf("#   PID <kp> <ki> <kd>  | KP <v> | KI <v> | KD <v> | PID SAVE\n");
-    printf("#   CAL            -> calibracao guiada (4 cantos + centro)\n");
-    printf("#                     responda OK / SKIP / CANCELAR ; no fim SALVAR\n");
-    printf("#   ELIPSE         -> teste: mesa varre uma elipse (PARAR p/ sair)\n");
-    printf("#   STEPPER        -> calibra o CURSO dos motores (MINIMO/MAXIMO)\n");
-    printf("#                     SOBE|DESCE 1mm ; MINIMO ; MAXIMO ; SALVAR\n");
-    printf("#   PIDAUTO        -> auto-tune do PID (oscila a bola e calcula)\n");
-    printf("#   SX <v> | SY <v>    -> sinal do controle por eixo (+1/-1)\n");
-    printf("#   ?              -> exibe ganhos, sinais e calibracao\n");
-    printf("# ================================================================\n");
-    printf("# Pronto. Digite SHOW para ver a tela, ou CAL para calibrar.\n");
+    cmd_print_help();
+    printf("# Pronto. Digite HELP para a lista, SHOW para ver a tela.\n");
     printf("# ================================================================\n");
 
     xTaskCreate(cmd_task, "pid_cmd", 3072, NULL, 5, NULL);
@@ -1035,7 +1122,9 @@ void control_run(void)
     int  presence = 0, absence = 0; /* contadores de debounce */
     double last_nx = 0.0, last_ny = 0.0;  /* última inclinação (segura queda curta) */
     unsigned loopn = 0;             /* contador p/ throttle da telemetria */
-    TickType_t last_wake = xTaskGetTickCount();
+    TickType_t last_wake  = xTaskGetTickCount();
+    TickType_t loop_start = last_wake;   /* início do laço (p/ carência) */
+    bool grace_done = false;
 
     for (;;) {
         touch_pos_t p;
@@ -1058,13 +1147,9 @@ void control_run(void)
         double nx = 0.0, ny = 0.0;
 
         if (s_stepper) {
-            /* Calibração de curso: mesa NIVELADA na altura sendo ajustada. */
-            apply_tilt_hz(s_jog_hz, 0.0, 0.0, thoff);
-            detected = false;
-        } else if (s_pidauto) {
-            /* Auto-tune: o relé comanda a inclinação (oscila a bola). */
-            pidauto_loop(touched, p.x_mm, p.y_mm, &nx, &ny);
-            apply_tilt(nx, ny, thoff);
+            /* Calibração de curso: move os 3 motores juntos (nível) em PASSOS. */
+            long t[STEPPER_COUNT] = { s_jog_steps, s_jog_steps, s_jog_steps };
+            steppers_move_to_all(t);
             detected = false;
         } else {
             if (s_ellipse) {
@@ -1078,7 +1163,16 @@ void control_run(void)
                 /* Durante a calibração a mesa fica NIVELADA (nx=ny=0): a bola
                  * fica onde você a coloca, sem o PID empurrá-la para o centro. */
                 detected = false;
+            } else if (!grace_done && (now - loop_start) < pdMS_TO_TICKS(STARTUP_GRACE_MS)) {
+                /* Carência: mesa NIVELADA enquanto a leitura estabiliza após o
+                 * homing. Ignora qualquer "toque" neste período. */
+                detected = false;
+                presence = 0; absence = 0;
             } else {
+                if (!grace_done) {
+                    grace_done = true;
+                    printf("STATE,PRONTO (aguardando a bola)\n");
+                }
                 /* ── Controle normal com presença DEBOUNCED ────────────────
                  * Só controla com a bola realmente detectada; sem bola, IDLE
                  * (mesa nivelada na posição padrão), aguardando o toque. */
@@ -1090,11 +1184,13 @@ void control_run(void)
                     pid_reset(&s_pid_x);
                     pid_reset(&s_pid_y);
                     printf("STATE,ACTIVE (bola detectada)\n");
+                    if (s_pidauto) auto_trial_begin();   /* começa a cronometrar */
                 } else if (detected && absence >= PRESENCE_OFF) {
                     detected = false;
                     pid_reset(&s_pid_x);
                     pid_reset(&s_pid_y);
                     printf("STATE,IDLE (sem bola)\n");
+                    if (s_pidauto) auto_trial_end(true); /* bola caiu -> pontua e ajusta */
                 }
 
                 if (detected) {
@@ -1107,22 +1203,30 @@ void control_run(void)
                     } else {
                         nx = last_nx; ny = last_ny;   /* segura durante a queda curta */
                     }
+                    /* Auto-tune: acumula erro (após acomodação) e fecha por tempo. */
+                    if (s_pidauto) {
+                        if ((now - s_auto_tstart) > pdMS_TO_TICKS((int)(AUTO_SETTLE_S * 1000))) {
+                            float ex = p.x_mm - SETPOINT_X_MM, ey = p.y_mm - SETPOINT_Y_MM;
+                            s_auto_errsum += sqrtf(ex * ex + ey * ey);
+                            s_auto_errn++;
+                        }
+                        if ((now - s_auto_tstart) > pdMS_TO_TICKS((int)(AUTO_TRIAL_MAX_S * 1000))) {
+                            auto_trial_end(false);   /* sucesso (ficou o tempo todo) */
+                            auto_trial_begin();      /* segue testando (bola ainda na mesa) */
+                        }
+                    }
                 }
                 /* se !detected: nx=ny=0 -> IDLE (mesa nivelada na posicao padrao) */
             }
             apply_tilt(nx, ny, thoff);
         }
 
-        if (s_pidauto) {
-            /* O proprio pidauto_loop ja imprime o progresso — nao spamar aqui. */
-        }
-        else if (s_stepper) {
+        if (s_stepper) {
             /* Status throttled (~3 Hz) da calibração de curso. */
             TickType_t tn = xTaskGetTickCount();
             if (tn - s_cal_live_last >= pdMS_TO_TICKS(300)) {
                 s_cal_live_last = tn;
-                printf("STEPPER,hz=%.0f,thA=%.1f,thB=%.1f,thC=%.1f\n",
-                       s_jog_hz, thoff[0], thoff[1], thoff[2]);
+                printf("STEPPER,passos=%ld\n", s_jog_steps);
             }
         }
         else if (s_ellipse) {
@@ -1163,6 +1267,23 @@ void control_run(void)
                    touched ? p.x_mm : -1.0f, touched ? p.y_mm : -1.0f,
                    SETPOINT_X_MM, SETPOINT_Y_MM, nx, ny,
                    thoff[0], thoff[1], thoff[2]);
+        }
+
+        /* Comando ERROR: erro (distância do centro) a cada 1 s, em qualquer modo. */
+        if (s_show_error) {
+            TickType_t tn = xTaskGetTickCount();
+            if (tn - s_err_last >= pdMS_TO_TICKS(1000)) {
+                s_err_last = tn;
+                if (touched) {
+                    float ex = p.x_mm - SETPOINT_X_MM;
+                    float ey = p.y_mm - SETPOINT_Y_MM;
+                    float d  = sqrtf(ex * ex + ey * ey);
+                    printf("ERROR,ex=%+.1f,ey=%+.1f,dist=%.1fmm\n",
+                           (double)ex, (double)ey, (double)d);
+                } else {
+                    printf("ERROR,sem_bola\n");
+                }
+            }
         }
 
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(LOOP_PERIOD_MS));

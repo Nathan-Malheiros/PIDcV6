@@ -18,12 +18,20 @@ typedef struct {
     int8_t  flip_x, flip_y, swap_xy;
 } cal_touch_t;
 
-/* Limites de curso dos motores (altura da plataforma, em mm), definidos pela
- * calibração guiada "STEPPER". hz_min = ponto baixo (bate na mesa),
- * hz_max = ponto alto (limite do braço). O startup opera no meio do curso. */
+/* Limites de curso dos motores em PASSOS, definidos pela calibração "STEPPER".
+ * step_min = ponto baixo (bate na mesa), step_max = ponto alto (limite do braço).
+ * O startup opera no meio do curso. */
 typedef struct {
-    float hz_min, hz_max;
+    int32_t step_min, step_max;
 } cal_steplim_t;
+
+/* Baselines "sem bola" (comando ZERO): lista de pontos presos do painel a
+ * ignorar. Salvo no NVS para valer após reiniciar. */
+#define CAL_BASE_MAX  8
+typedef struct {
+    int8_t count;
+    float  x[CAL_BASE_MAX], y[CAL_BASE_MAX];
+} cal_baseline_t;
 
 /* Initialize NVS flash — erases partition only if version mismatch or full. */
 void cal_store_init(void);
@@ -39,3 +47,7 @@ void cal_store_save_touch(const cal_touch_t *in);
 /* Returns true if motor travel limits were found in NVS. */
 bool cal_store_load_steplim(cal_steplim_t *out);
 void cal_store_save_steplim(const cal_steplim_t *in);
+
+/* Returns true if a touch baseline blob was found in NVS. */
+bool cal_store_load_baseline(cal_baseline_t *out);
+void cal_store_save_baseline(const cal_baseline_t *in);

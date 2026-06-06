@@ -29,6 +29,15 @@ static const adc_oneshot_chan_cfg_t s_ch_cfg = {
 static float s_x_filt = -1.0f;
 static float s_y_filt = -1.0f;
 
+/* Baselines "sem bola": ZERO acumula vários pontos presos do painel; cada ZERO
+ * adiciona o ponto atual à lista. Qualquer leitura perto de UM deles vira
+ * NOTOUCH. ZEROCLR limpa. Paliativo — não conserta a leitura com bola. */
+#define TOUCH_BASE_MAX      8
+#define TOUCH_BASE_TOL_MM   8.0f
+static int   s_base_n = 0;
+static float s_base_x[TOUCH_BASE_MAX];
+static float s_base_y[TOUCH_BASE_MAX];
+
 /* ── Runtime calibration (initialised from compile-time defaults) ─────────── */
 
 static int32_t s_x_raw_min = TOUCH_X_RAW_MIN;
@@ -70,6 +79,40 @@ void touch_get_cal(int32_t *x_raw_min, int32_t *x_raw_max,
     *flip_x    = s_flip_x;
     *flip_y    = s_flip_y;
     *swap_xy   = s_swap_xy;
+}
+
+int touch_add_baseline(void)
+{
+    if (s_x_filt < 0.0f) return -1;                 /* sem leitura agora */
+    if (s_base_n >= TOUCH_BASE_MAX) return -2;      /* lista cheia */
+    s_base_x[s_base_n] = s_x_filt;
+    s_base_y[s_base_n] = s_y_filt;
+    s_base_n++;
+    ESP_LOGI(TAG, "baseline +1 em (%.1f, %.1f) -> total %d",
+             (double)s_x_filt, (double)s_y_filt, s_base_n);
+    return s_base_n;
+}
+
+void touch_clear_baseline(void)
+{
+    s_base_n = 0;
+    ESP_LOGI(TAG, "baselines limpos");
+}
+
+int touch_get_baselines(float *xs, float *ys, int max)
+{
+    int n = (s_base_n < max) ? s_base_n : max;
+    for (int i = 0; i < n; i++) { xs[i] = s_base_x[i]; ys[i] = s_base_y[i]; }
+    return n;
+}
+
+void touch_set_baselines(int n, const float *xs, const float *ys)
+{
+    if (n > TOUCH_BASE_MAX) n = TOUCH_BASE_MAX;
+    if (n < 0) n = 0;
+    for (int i = 0; i < n; i++) { s_base_x[i] = xs[i]; s_base_y[i] = ys[i]; }
+    s_base_n = n;
+    ESP_LOGI(TAG, "baselines aplicados do NVS: %d", n);
 }
 
 /* ── GPIO helpers ────────────────────────────────────────────────────────── */
@@ -148,11 +191,17 @@ static bool touch_detect(void)
     };
     gpio_config(&c);
     esp_rom_delay_us(60);                 /* pull-up estabiliza (DC) */
-    int level = gpio_get_level(TOUCH_PIN_YP);
+
+    /* Multi-amostra: um pico de ruído (motores) não dispara o controle. */
+    int low = 0;
+    for (int i = 0; i < TOUCH_DETECT_SAMPLES; i++) {
+        if (gpio_get_level(TOUCH_PIN_YP) == 0) low++;
+        esp_rom_delay_us(40);
+    }
 
     /* devolve Y+ para entrada sem pull (estado neutro p/ a leitura ADC) */
     pin_in(TOUCH_PIN_YP);
-    return (level == 0);                  /* baixo = tocado */
+    return (low >= TOUCH_DETECT_NEED);    /* maioria em nível baixo = tocado */
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
@@ -211,12 +260,10 @@ bool touch_read(touch_pos_t *pos)
     pos->x_raw = x_raw;
     pos->y_raw = y_raw;
 
-    if (x_raw < TOUCH_DETECT_THRESHOLD || y_raw < TOUCH_DETECT_THRESHOLD) {
-        s_x_filt   = -1.0f;
-        s_y_filt   = -1.0f;
-        pos->valid = false;
-        return false;
-    }
+    /* NÃO rejeitamos por limiar de ADC aqui: perto das bordas a leitura de
+     * POSIÇÃO vai legitimamente a ~0 (proporcional à posição), o que barrava o
+     * toque nos cantos. A PRESENÇA já foi confirmada pela detecção digital
+     * (touch_detect, independente da posição). Aqui só convertemos a posição. */
 
     /* raw → normalised [0,1] using runtime calibration.
      * Span guard: a degenerate calibration (max == min, e.g. via a bad SETCAL)
@@ -251,6 +298,18 @@ bool touch_read(touch_pos_t *pos)
 
     pos->x_mm  = s_x_filt;
     pos->y_mm  = s_y_filt;
+
+    /* Se a leitura coincide com ALGUM baseline (pontos presos aprendidos por
+     * ZERO), trata como SEM bola — evita "equilibrar o nada". */
+    for (int i = 0; i < s_base_n; i++) {
+        float dx = s_x_filt - s_base_x[i]; if (dx < 0.0f) dx = -dx;
+        float dy = s_y_filt - s_base_y[i]; if (dy < 0.0f) dy = -dy;
+        if (dx < TOUCH_BASE_TOL_MM && dy < TOUCH_BASE_TOL_MM) {
+            pos->valid = false;
+            return false;
+        }
+    }
+
     pos->valid = true;
     return true;
 }

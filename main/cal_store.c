@@ -87,11 +87,11 @@ bool cal_store_load_steplim(cal_steplim_t *out)
     nvs_handle_t h;
     if (!ns_open(NVS_READONLY, &h)) return false;
     size_t sz = sizeof(*out);
-    bool ok = (nvs_get_blob(h, "steplim", out, &sz) == ESP_OK && sz == sizeof(*out));
+    bool ok = (nvs_get_blob(h, "steplim2", out, &sz) == ESP_OK && sz == sizeof(*out));
     nvs_close(h);
     if (ok)
-        ESP_LOGI(TAG, "Step limits loaded  hz_min=%.1f  hz_max=%.1f",
-                 (double)out->hz_min, (double)out->hz_max);
+        ESP_LOGI(TAG, "Step limits loaded  min=%ld  max=%ld",
+                 (long)out->step_min, (long)out->step_max);
     return ok;
 }
 
@@ -99,9 +99,33 @@ void cal_store_save_steplim(const cal_steplim_t *in)
 {
     nvs_handle_t h;
     if (!ns_open(NVS_READWRITE, &h)) { ESP_LOGE(TAG, "NVS open failed"); return; }
-    ESP_ERROR_CHECK(nvs_set_blob(h, "steplim", in, sizeof(*in)));
+    ESP_ERROR_CHECK(nvs_set_blob(h, "steplim2", in, sizeof(*in)));
     ESP_ERROR_CHECK(nvs_commit(h));
     nvs_close(h);
-    ESP_LOGI(TAG, "Step limits saved  hz_min=%.1f  hz_max=%.1f",
-             (double)in->hz_min, (double)in->hz_max);
+    ESP_LOGI(TAG, "Step limits saved  min=%ld  max=%ld",
+             (long)in->step_min, (long)in->step_max);
+}
+
+/* ── Touch baseline (ponto preso) ─────────────────────────────────────────── */
+
+bool cal_store_load_baseline(cal_baseline_t *out)
+{
+    nvs_handle_t h;
+    if (!ns_open(NVS_READONLY, &h)) return false;
+    size_t sz = sizeof(*out);
+    bool ok = (nvs_get_blob(h, "tbase", out, &sz) == ESP_OK && sz == sizeof(*out));
+    nvs_close(h);
+    if (ok)
+        ESP_LOGI(TAG, "Baselines loaded: %d pontos", out->count);
+    return ok;
+}
+
+void cal_store_save_baseline(const cal_baseline_t *in)
+{
+    nvs_handle_t h;
+    if (!ns_open(NVS_READWRITE, &h)) { ESP_LOGE(TAG, "NVS open failed"); return; }
+    ESP_ERROR_CHECK(nvs_set_blob(h, "tbase", in, sizeof(*in)));
+    ESP_ERROR_CHECK(nvs_commit(h));
+    nvs_close(h);
+    ESP_LOGI(TAG, "Baselines saved: %d pontos", in->count);
 }

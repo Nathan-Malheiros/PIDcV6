@@ -69,13 +69,20 @@
 #define TOUCH_IIR_ALPHA      0.45f
 
 /*
- * ADC threshold for touch detection.
- * Each sense pin is discharged to ~0 before reading, so with no contact it
- * stays near 0. A real contact bridges the layers and the sense pin charges
- * to the divider voltage (>1700 raw). 300 sits safely in the gap and rejects
- * ADC noise. A touch is only accepted when BOTH axes read above this.
+ * ADC threshold for touch detection. Um contato real carrega o pino de sense
+ * para >1700; o acoplamento elétrico (motores girando) dá valores médios. Subido
+ * de 300 -> 800 para rejeitar esse acoplamento. Toque só vale se AMBOS os eixos
+ * lerem acima disto E a detecção digital (pull-up) confirmar.
  */
-#define TOUCH_DETECT_THRESHOLD  300
+#define TOUCH_DETECT_THRESHOLD  800
+
+/*
+ * Detecção digital robusta (pull-up): amostra TOUCH_DETECT_SAMPLES vezes e exige
+ * pelo menos TOUCH_DETECT_NEED em nível baixo. Rejeita picos de ruído (1 amostra
+ * suja não dispara o controle).
+ */
+#define TOUCH_DETECT_SAMPLES   6
+#define TOUCH_DETECT_NEED      5
 
 /*
  * Microsecond timings for the resistive scan.
@@ -135,3 +142,12 @@ void touch_set_cal(int32_t x_raw_min, int32_t x_raw_max,
 void touch_get_cal(int32_t *x_raw_min, int32_t *x_raw_max,
                    int32_t *y_raw_min, int32_t *y_raw_max,
                    int *flip_x, int *flip_y, int *swap_xy);
+
+/* Baselines "sem bola" (comando ZERO): pontos presos do painel a ignorar.
+ * touch_add_baseline() adiciona o ponto atual à lista (retorna o total novo,
+ * ou <0 se sem leitura/cheio). touch_clear_baseline() limpa.
+ * touch_get_baselines/set_baselines: para persistir no NVS. */
+int  touch_add_baseline(void);
+void touch_clear_baseline(void);
+int  touch_get_baselines(float *xs, float *ys, int max);
+void touch_set_baselines(int n, const float *xs, const float *ys);
