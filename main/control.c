@@ -129,6 +129,12 @@ static double    s_ang_orig;
 static float     s_sign_x = TILT_SIGN_X;
 static float     s_sign_y = TILT_SIGN_Y;
 
+/* Viés de nível (TRIM): inclinação constante somada à saída para compensar a
+ * base torta. Aprendido do integral em regime; persiste no NVS. Aplicado também
+ * em IDLE, para a mesa já esperar a bola nivelada em relação à gravidade. */
+static float     s_trim_x = 0.0f;
+static float     s_trim_y = 0.0f;
+
 /* Último toque lido pelo loop principal; usado pelo cmd_task para capturar
  * cantos. Campos 32-bit são atômicos em ARM — sem mutex para leitura simples. */
 static volatile int32_t s_snap_x_raw   = 0;
@@ -242,6 +248,39 @@ static void cmd_print_gains(void)
 static void cmd_print_signs(void)
 {
     printf("SIGNS,%+.0f,%+.0f\n", (double)s_sign_x, (double)s_sign_y);
+}
+
+static void cmd_trim_show(void)
+{
+    printf("TRIM,nx=%.4f,ny=%.4f rad  (%.2f, %.2f graus)\n",
+           (double)s_trim_x, (double)s_trim_y,
+           (double)(s_trim_x * 57.29578f), (double)(s_trim_y * 57.29578f));
+}
+
+/* Transfere o que o integral acumulou (a inclinação constante que ele descobriu
+ * para a base torta) para o viés fixo s_trim, e ZERA o integral. Sem salto: o
+ * que sai do integral entra no trim. Faça com a bola equilibrada há ~10-20 s. */
+static void cmd_trim_capture(void)
+{
+    s_trim_x += s_sign_x * (s_pid_x.ki * s_pid_x.integ);
+    s_trim_y += s_sign_y * (s_pid_y.ki * s_pid_y.integ);
+    s_pid_x.integ = 0.0f;
+    s_pid_y.integ = 0.0f;
+    /* salvaguarda: nunca deixa o viés sozinho estourar o curso útil */
+    if (s_trim_x >  TILT_LIMIT) s_trim_x =  TILT_LIMIT;
+    if (s_trim_x < -TILT_LIMIT) s_trim_x = -TILT_LIMIT;
+    if (s_trim_y >  TILT_LIMIT) s_trim_y =  TILT_LIMIT;
+    if (s_trim_y < -TILT_LIMIT) s_trim_y = -TILT_LIMIT;
+    printf("TRIM,capturado do integral\n");
+    cmd_trim_show();
+}
+
+static void cmd_trim_save(void)
+{
+    cal_trim_t t = { s_trim_x, s_trim_y };
+    cal_store_save_trim(&t);
+    printf("SAVED,trim\n");
+    cmd_trim_show();
 }
 
 static void cmd_print_cal(void)
@@ -374,6 +413,7 @@ static void cmd_print_help(void)
     printf("=============== COMANDOS ===============\n");
     printf(" SHOW / HIDDEN   mostra / esconde leituras da tela\n");
     printf(" ERROR           imprime o erro (dist. do centro) a cada 1s (ERROR OFF)\n");
+    printf(" TRIM            aprende o nivel da base torta | TRIM SHOW/CLR/SAVE\n");
     printf(" PID             mostra Kp/Ki/Kd e como mudar\n");
     printf(" PID <kp> <ki> <kd> ('-' mantem) | KP/KI/KD <v> | PID SAVE\n");
     printf(" PIDAUTO         auto-tune do PID (oscila a bola)\n");
@@ -801,6 +841,23 @@ static void cmd_handle(char *s)
         return;
     }
 
+    /* TRIM -> viés de nível p/ base torta.
+     *   TRIM        captura a inclinação constante (do integral) p/ o viés fixo
+     *   TRIM SHOW   mostra o viés atual
+     *   TRIM CLR    zera o viés
+     *   TRIM SAVE   grava no NVS (vale após reiniciar)                        */
+    if (strcmp(s, "TRIM SHOW") == 0) { cmd_trim_show(); return; }
+    if (strcmp(s, "TRIM CLR") == 0 || strcmp(s, "TRIM CLEAR") == 0) {
+        s_trim_x = 0.0f; s_trim_y = 0.0f;
+        printf("TRIM,zerado\n");
+        return;
+    }
+    if (strcmp(s, "TRIM SAVE") == 0) { cmd_trim_save(); return; }
+    if (strcmp(s, "TRIM") == 0 || strcmp(s, "TRIM SET") == 0) {
+        cmd_trim_capture();
+        return;
+    }
+
     /* PID (sozinho) -> mostra os ganhos atuais e como mudá-los.            */
     if (strcmp(s, "PID") == 0) {
         cmd_pid_menu();
@@ -1019,6 +1076,14 @@ void control_run(void)
         touch_set_baselines(saved_base.count, saved_base.x, saved_base.y);
     }
 
+    /* Viés de nível (TRIM) para a base torta, se salvo */
+    cal_trim_t saved_trim;
+    if (cal_store_load_trim(&saved_trim)) {
+        s_trim_x = saved_trim.nx;
+        s_trim_y = saved_trim.ny;
+        ESP_LOGI(TAG, "Trim ativo: nx=%.4f ny=%.4f rad", (double)s_trim_x, (double)s_trim_y);
+    }
+
     steppers_init();
 
     for (int i = 0; i < STEPPER_COUNT; i++) {
@@ -1207,6 +1272,12 @@ void control_run(void)
                     }
                 }
                 /* se !detected: nx=ny=0 -> IDLE (mesa nivelada na posicao padrao) */
+
+                /* Viés de nível (TRIM): compensa a base torta como feedforward
+                 * constante. Some na saída em controle E em IDLE, assim a mesa
+                 * espera a bola já nivelada e o integral não reaprende isso. */
+                nx += s_trim_x;
+                ny += s_trim_y;
             }
             apply_tilt(nx, ny, thoff);
         }

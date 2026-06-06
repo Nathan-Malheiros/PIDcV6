@@ -33,6 +33,13 @@ typedef struct {
     float  x[CAL_BASE_MAX], y[CAL_BASE_MAX];
 } cal_baseline_t;
 
+/* Viés de nível (comando TRIM): inclinação CONSTANTE (rad) aplicada como
+ * feedforward para compensar a base/estrutura torta. Aprendido do integral em
+ * regime e salvo no NVS — a plataforma já nasce nivelada após reiniciar. */
+typedef struct {
+    float nx, ny;
+} cal_trim_t;
+
 /* Initialize NVS flash — erases partition only if version mismatch or full. */
 void cal_store_init(void);
 
@@ -51,3 +58,7 @@ void cal_store_save_steplim(const cal_steplim_t *in);
 /* Returns true if a touch baseline blob was found in NVS. */
 bool cal_store_load_baseline(cal_baseline_t *out);
 void cal_store_save_baseline(const cal_baseline_t *in);
+
+/* Returns true if a level-trim blob was found in NVS. */
+bool cal_store_load_trim(cal_trim_t *out);
+void cal_store_save_trim(const cal_trim_t *in);

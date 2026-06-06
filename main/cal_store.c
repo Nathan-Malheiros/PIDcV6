@@ -129,3 +129,27 @@ void cal_store_save_baseline(const cal_baseline_t *in)
     nvs_close(h);
     ESP_LOGI(TAG, "Baselines saved: %d pontos", in->count);
 }
+
+/* ── Level trim (viés de nível — base torta) ──────────────────────────────── */
+
+bool cal_store_load_trim(cal_trim_t *out)
+{
+    nvs_handle_t h;
+    if (!ns_open(NVS_READONLY, &h)) return false;
+    size_t sz = sizeof(*out);
+    bool ok = (nvs_get_blob(h, "trim", out, &sz) == ESP_OK && sz == sizeof(*out));
+    nvs_close(h);
+    if (ok)
+        ESP_LOGI(TAG, "Trim loaded  nx=%.4f  ny=%.4f rad", (double)out->nx, (double)out->ny);
+    return ok;
+}
+
+void cal_store_save_trim(const cal_trim_t *in)
+{
+    nvs_handle_t h;
+    if (!ns_open(NVS_READWRITE, &h)) { ESP_LOGE(TAG, "NVS open failed"); return; }
+    ESP_ERROR_CHECK(nvs_set_blob(h, "trim", in, sizeof(*in)));
+    ESP_ERROR_CHECK(nvs_commit(h));
+    nvs_close(h);
+    ESP_LOGI(TAG, "Trim saved  nx=%.4f  ny=%.4f rad", (double)in->nx, (double)in->ny);
+}

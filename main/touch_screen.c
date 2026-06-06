@@ -29,6 +29,16 @@ static const adc_oneshot_chan_cfg_t s_ch_cfg = {
 static float s_x_filt = -1.0f;
 static float s_y_filt = -1.0f;
 
+/* Rejeição de outliers: uma bola não teleporta. Um salto isolado e grande
+ * (acoplamento dos motores, repique do contato, amostra de ADC suja) é
+ * DESCARTADO — a malha não "surta" por uma leitura falsa. Se o salto PERSISTE
+ * por algumas amostras, é movimento real (ou a bola foi recolocada) e aí
+ * aceitamos (resync). Assim nunca travamos o movimento legítimo da bola, que
+ * em 10 ms anda no máx. ~8 mm; 30 mm/amostra só pega glitch grosseiro. */
+#define TOUCH_JUMP_MM        30.0f
+#define TOUCH_JUMP_MAX_SKIP  3
+static int   s_jump_skips = 0;
+
 /* Baselines "sem bola": ZERO acumula vários pontos presos do painel; cada ZERO
  * adiciona o ponto atual à lista. Qualquer leitura perto de UM deles vira
  * NOTOUCH. ZEROCLR limpa. Paliativo — não conserta a leitura com bola. */
@@ -238,9 +248,10 @@ bool touch_read(touch_pos_t *pos)
         pin_in(TOUCH_PIN_XM);
         pin_in(TOUCH_PIN_YP);
         pin_in(TOUCH_PIN_YM);
-        s_x_filt   = -1.0f;
-        s_y_filt   = -1.0f;
-        pos->valid = false;
+        s_x_filt     = -1.0f;
+        s_y_filt     = -1.0f;
+        s_jump_skips = 0;
+        pos->valid   = false;
         return false;
     }
 
@@ -287,6 +298,25 @@ bool touch_read(touch_pos_t *pos)
 
     float x_mm = x_norm * TOUCH_WIDTH_MM;
     float y_mm = y_norm * TOUCH_HEIGHT_MM;
+
+    /* Rejeição de salto impossível: se a nova leitura pula demais em relação ao
+     * último valor bom, descarta (usa o anterior) por até MAX_SKIP amostras.
+     * Persistiu? É real -> aceita e ressincroniza. Evita o "chute" no PID. */
+    if (s_x_filt >= 0.0f) {
+        float dx = x_mm - s_x_filt;
+        float dy = y_mm - s_y_filt;
+        if ((dx * dx + dy * dy) > (TOUCH_JUMP_MM * TOUCH_JUMP_MM)) {
+            if (s_jump_skips < TOUCH_JUMP_MAX_SKIP) {
+                s_jump_skips++;
+                x_mm = s_x_filt;       /* ignora o salto: mantém o último bom */
+                y_mm = s_y_filt;
+            } else {
+                s_jump_skips = 0;      /* salto sustentado: aceita (resync) */
+            }
+        } else {
+            s_jump_skips = 0;
+        }
+    }
 
     if (s_x_filt < 0.0f) {
         s_x_filt = x_mm;
