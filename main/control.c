@@ -165,7 +165,7 @@ typedef struct { int32_t x, y; bool valid; } corner_t;
 static corner_t s_corners[4];
 
 /* ── Calibração guiada pelo terminal serial (humano) ──────────────────────
- * Máquina de estados conduzida pelos comandos OK / SKIP / CANCELAR. Enquanto
+ * Máquina de estados conduzida pelos comandos OK / CANCELAR. Enquanto
  * ativa (s_calibrating), o laço mantém a mesa NIVELADA (não balanceia), para a
  * bola ficar onde você a coloca, e emite um stream LIVE enxuto a ~2,5 Hz.
  */
@@ -323,6 +323,15 @@ static void cmd_cal_apply(void)
 
     touch_set_cal(x_raw_min, x_raw_max, y_raw_min, y_raw_max, flip_x, flip_y, swap_xy);
     cmd_print_cal();
+
+    /* Centro derivado dos 4 cantos (ponto médio) — NÃO é medido com a bola,
+     * para não enviesar a calibração. Por construção do mapeamento linear ele
+     * cai exatamente no centro geométrico (TOUCH_WIDTH/2, TOUCH_HEIGHT/2 mm). */
+    int32_t cx_raw = (left_x + right_x) / 2;
+    int32_t cy_raw = (top_y  + bot_y ) / 2;
+    printf("CAL> centro (dos cantos): raw=(%ld,%ld) -> alvo %.0f,%.0f mm\n",
+           (long)cx_raw, (long)cy_raw,
+           (double)SETPOINT_X_MM, (double)SETPOINT_Y_MM);
 }
 
 static void cmd_cal_save(void)
@@ -397,19 +406,13 @@ static void cal_print_prompt(void)
 {
     switch (s_cal_state) {
     case CAL_WAIT_TL:
-        printf("CAL> [1/7] Bola no canto SUPERIOR-ESQUERDO  -> digite OK\n"); break;
+        printf("CAL> [1/4] Bola no canto SUPERIOR-ESQUERDO  -> digite OK\n"); break;
     case CAL_WAIT_TR:
-        printf("CAL> [2/7] Bola no canto SUPERIOR-DIREITO (lado do cabo) -> OK\n"); break;
+        printf("CAL> [2/4] Bola no canto SUPERIOR-DIREITO (lado do cabo) -> OK\n"); break;
     case CAL_WAIT_BR:
-        printf("CAL> [3/7] Bola no canto INFERIOR-DIREITO (lado do cabo) -> OK\n"); break;
+        printf("CAL> [3/4] Bola no canto INFERIOR-DIREITO (lado do cabo) -> OK\n"); break;
     case CAL_WAIT_BL:
-        printf("CAL> [4/7] Bola no canto INFERIOR-ESQUERDO -> OK\n"); break;
-    case CAL_WAIT_CENTER:
-        printf("CAL> [5/7] Bola no CENTRO -> OK   (ou SKIP para pular)\n"); break;
-    case CAL_WAIT_TC:
-        printf("CAL> [6/7] Bola no CENTRO SUPERIOR (meio de cima) -> OK   (ou SKIP)\n"); break;
-    case CAL_WAIT_BC:
-        printf("CAL> [7/7] Bola no CENTRO INFERIOR (meio de baixo) -> OK   (ou SKIP)\n"); break;
+        printf("CAL> [4/4] Bola no canto INFERIOR-ESQUERDO -> OK\n"); break;
     case CAL_CONFIRM:
         printf("CAL> SALVAR (grava no NVS)  ou  CANCELAR (descarta)\n"); break;
     default: break;
@@ -433,16 +436,14 @@ static void cal_advance(void)
     case CAL_WAIT_TL:     s_cal_state = CAL_WAIT_TR;     break;
     case CAL_WAIT_TR:     s_cal_state = CAL_WAIT_BR;     break;
     case CAL_WAIT_BR:     s_cal_state = CAL_WAIT_BL;     break;
-    case CAL_WAIT_BL:     s_cal_state = CAL_WAIT_CENTER; break;
-    case CAL_WAIT_CENTER: s_cal_state = CAL_WAIT_TC;     break;
-    case CAL_WAIT_TC:     s_cal_state = CAL_WAIT_BC;     break;
-    case CAL_WAIT_BC:
-        /* Calcula a calibração a partir dos 4 cantos (já validados). Os pontos
-         * CENTRO / CENTRO-SUP / CENTRO-INF servem de verificação (veja no LIVE). */
-        cmd_cal_apply();   /* aplica ao vivo; imprime CAL,... */
+    case CAL_WAIT_BL:
+        /* 4 cantos prontos: calcula a calibração E o centro a partir deles.
+         * O centro NÃO é mais medido com a bola (isso enviesava a calibração);
+         * ele é o ponto médio dos 4 cantos, garantido geometricamente. */
+        cmd_cal_apply();   /* aplica ao vivo; imprime CAL,... e o centro calculado */
         s_cal_state = CAL_CONFIRM;
-        printf("CAL> Calibracao aplicada. Confira CENTRO/CENTRO-SUP/CENTRO-INF "
-               "no stream LIVE.\n");
+        printf("CAL> Calibracao aplicada (centro derivado dos cantos). "
+               "Confira o CENTRO no stream LIVE.\n");
         break;
     default: break;
     }
@@ -455,9 +456,6 @@ static void cal_start(void)
     touch_get_cal(&s_bak_xmn, &s_bak_xmx, &s_bak_ymn, &s_bak_ymx,
                   &s_bak_fx, &s_bak_fy, &s_bak_sw);
     for (int i = 0; i < 4; i++) s_corners[i].valid = false;
-    s_center.valid = false;
-    s_tc.valid = false;
-    s_bc.valid = false;
     s_ellipse     = false;        /* nao roda elipse durante a calibracao */
     s_stepper     = false;
     s_pidauto     = false;
@@ -466,7 +464,8 @@ static void cal_start(void)
     pid_reset(&s_pid_x);   /* a mesa para de balancear durante a calibração */
     pid_reset(&s_pid_y);
     printf("CAL> Modo CALIBRACAO. A mesa fica NIVELADA (nao balanceia).\n");
-    printf("CAL> Orientacao: cabo FPC a DIREITA.  Comandos: OK | SKIP | CANCELAR\n");
+    printf("CAL> Orientacao: cabo FPC a DIREITA.  Comandos: OK | CANCELAR\n");
+    printf("CAL> So os 4 cantos. O centro e calculado a partir deles.\n");
     cal_print_prompt();
 }
 
@@ -505,14 +504,8 @@ static void cal_step(const char *s)
     }
 
     if (strcmp(s, "SKIP") == 0) {
-        /* os 4 cantos são obrigatórios; centro e centros sup/inf são opcionais */
-        if (s_cal_state == CAL_WAIT_CENTER || s_cal_state == CAL_WAIT_TC ||
-            s_cal_state == CAL_WAIT_BC) {
-            printf("CAL> ponto pulado\n");
-            cal_advance();
-        } else {
-            printf("CAL> este canto e obrigatorio. Coloque a bola e digite OK.\n");
-        }
+        /* os 4 cantos são todos obrigatórios; o centro é derivado deles */
+        printf("CAL> este canto e obrigatorio. Coloque a bola e digite OK.\n");
         return;
     }
 
@@ -523,16 +516,13 @@ static void cal_step(const char *s)
         case CAL_WAIT_TR:     ok = cal_capture(&s_corners[COR_TR], "SUP-DIR (TR)"); break;
         case CAL_WAIT_BR:     ok = cal_capture(&s_corners[COR_BR], "INF-DIR (BR)"); break;
         case CAL_WAIT_BL:     ok = cal_capture(&s_corners[COR_BL], "INF-ESQ (BL)"); break;
-        case CAL_WAIT_CENTER: ok = cal_capture(&s_center,         "CENTRO");        break;
-        case CAL_WAIT_TC:     ok = cal_capture(&s_tc,             "CENTRO-SUP");    break;
-        case CAL_WAIT_BC:     ok = cal_capture(&s_bc,             "CENTRO-INF");    break;
         default: break;
         }
         if (ok) cal_advance();
         return;
     }
 
-    printf("CAL> comandos: OK (captura) | SKIP (pula) | CANCELAR (aborta)\n");
+    printf("CAL> comandos: OK (captura canto) | CANCELAR (aborta)\n");
 }
 
 /* ── Calibração de curso dos motores (modo guiado STEPPER) ────────────────── */
