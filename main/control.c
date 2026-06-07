@@ -86,6 +86,9 @@ static const char *TAG = "control";
 #define ACCEL_BALANCE   16000.0f   /* resposta mais viva (suave pois micro=1/16) */
 #define SPEED_HOME        400.0f   /* homing continua devagar (seguro) */
 #define ACCEL_HOME       1500.0f
+/* Dancinha de inicialização: velocidade graciosa (nem lenta, nem violenta). */
+#define SPEED_DANCE      1500.0f
+#define ACCEL_DANCE     12000.0f
 
 /* ── Homing: subida inicial ───────────────────────────────────────────────
  * Antes de nivelar, a plataforma sobe HOMING_LIFT_MM acima da altura de
@@ -192,6 +195,13 @@ static TickType_t s_cal_live_last = 0;
  */
 static volatile bool s_ellipse       = false;
 static double        s_ellipse_phase = 0.0;
+static volatile bool s_dance         = false;   /* pedido p/ rodar a dancinha */
+/* CIRC: malha FECHADA — o setpoint (alvo) gira num círculo pequeno em torno do
+ * centro, então a BOLA segue e circula suavemente. Precisa da bola na mesa. */
+static volatile bool s_circle        = false;
+static double        s_circle_phase  = 0.0;
+#define CIRCLE_R_MM     22.0       /* raio do círculo da bola (mm, em torno do centro) */
+#define CIRCLE_HZ       0.12       /* ~8 s por volta (giro leve) */
 #define ELLIPSE_AMP_X   0.15      /* amplitude da inclinação em X (< TILT_LIMIT) */
 #define ELLIPSE_AMP_Y   0.10      /* amplitude em Y (≠ X → elipse) */
 #define ELLIPSE_HZ      0.17      /* ~6 s por volta (movimento lento e suave) */
@@ -223,10 +233,19 @@ static bool          s_step_max_set = false;
  * convergindo para ganhos que NÃO deixam a bola sair. */
 static volatile bool s_pidauto = false;       /* tuning adaptativo ligado */
 static bool       s_auto_baseline;            /* 1a tentativa = baseline */
+static bool       s_auto_active;              /* há uma tentativa em andamento */
+static bool       s_auto_recenter;           /* aguardando a bola voltar ao centro */
+static bool       s_auto_trimmed;             /* TRIM já capturado nesta sessão */
+static bool       s_auto_low;                 /* erro atualmente dentro da janela baixa */
+static TickType_t s_auto_low_since;           /* desde quando o erro está baixo */
 static TickType_t s_auto_tstart;              /* início da tentativa atual */
 static float      s_auto_errsum;              /* soma do erro p/ média */
 static int        s_auto_errn;
 static float      s_best_kp, s_best_ki, s_best_kd, s_best_score;
+static float      s_seed_kp, s_seed_ki, s_seed_kd;  /* semente: limita a deriva */
+static float      s_auto_spdsum;              /* soma da velocidade (agitação) p/ média */
+static float      s_auto_px, s_auto_py;       /* posição anterior (p/ velocidade) */
+static bool       s_auto_pprimed;             /* já há posição anterior válida */
 static int        s_auto_move;                /* 0..5: kp+ kp- kd+ kd- ki+ ki- */
 static int        s_auto_since;               /* tentativas sem melhora */
 static float      s_auto_step;                /* fator multiplicativo dos ganhos */
@@ -234,8 +253,37 @@ static int        s_auto_trial;               /* contador de tentativas */
 #define AUTO_NMOVES       6       /* kp± kd± ki± */
 #define AUTO_TRIAL_MAX_S  5.0f    /* janela de avaliação de cada conjunto */
 #define AUTO_SETTLE_S     1.5f    /* ignora o transitório de colocar a bola */
-#define AUTO_STEP0        1.25f   /* passo inicial (×/÷ nos ganhos) — gentil */
+#define AUTO_STEP0        1.15f   /* passo inicial (×/÷ nos ganhos) — fino (±15%) */
 #define AUTO_STEP_MIN     1.05f   /* passo mínimo (convergência fina) */
+/* AUTO-TRIM: como o PIDAUTO agora parte de ganhos JÁ BONS, ele funciona como um
+ * AJUSTE FINO. Se a bola passar AUTO_TRIM_HOLD_S segundos com erro baixo (dentro
+ * de AUTO_TRIM_ERR_MM do centro), ele captura o TRIM sozinho — transfere o viés
+ * que o integral achou (base torta) para feedforward e zera o integral. Uma vez
+ * por sessão: depois disso a bola já parte nivelada e a busca refina a dinâmica. */
+#define AUTO_TRIM_ERR_MM  8.0f    /* "erro baixo" = dist. do centro p/ disparar trim */
+#define AUTO_TRIM_HOLD_S  10.0f   /* tempo contínuo em erro baixo p/ capturar trim */
+/* SEGURANÇA do ajuste fino — para NÃO desestabilizar uma semente que já funciona:
+ *  - a busca fica PRESA perto da semente (a deriva de cada ganho é limitada);
+ *  - o custo pune a AGITAÇÃO da bola (velocidade média), não só a distância ao
+ *    centro. Sem isso, subir Kp "melhorava" o erro até oscilar/instabilizar
+ *    (a fita escondia a queda). Com isso, oscilar pontua PIOR que a semente;
+ *  - só troca de ganhos com melhora CLARA (margem), evitando perseguir ruído. */
+#define AUTO_DRIFT_LO     0.6f    /* cada ganho >= semente × 0.6 */
+#define AUTO_DRIFT_HI     1.6f    /* cada ganho <= semente × 1.6 */
+#define AUTO_SPD_W        0.25f   /* peso da agitação (mm/s) no custo */
+#define AUTO_IMPROVE_MARG 1.5f    /* melhora mínima de score p/ aceitar a troca */
+/* ABORTO PRECOCE: para o tuner não "empurrar a bola pra fora" enquanto mede um
+ * ajuste ruim. Se a bola passar deste raio DEPOIS do settle, o ajuste atual é
+ * perigoso -> aborta na hora, penaliza o movimento e VOLTA pro melhor (semente),
+ * sem esperar a janela inteira nem deixar chegar na borda virtual (queda). */
+#define AUTO_ABORT_R_MM   45.0f   /* < AUTO_FALL_R_MM: corta antes de "cair" */
+/* QUEDA VIRTUAL: a mesa tem FITA nas bordas, então a bola bate e volta em vez
+ * de cair. Para o auto-tune, a referência é o CENTRO da mesa: se a bola passar
+ * deste raio (mm), em teoria ela teria caído -> contamos como QUEDA (penaliza),
+ * mesmo que a fita a traga de volta. Depois ela precisa voltar para dentro de
+ * AUTO_RECENTER_R_MM (perto do centro) para começar a próxima tentativa. */
+#define AUTO_FALL_R_MM     62.0f
+#define AUTO_RECENTER_R_MM 25.0f
 
 /* ── Impressão de estado ──────────────────────────────────────────────────── */
 
@@ -416,10 +464,12 @@ static void cmd_print_help(void)
     printf(" TRIM            aprende o nivel da base torta | TRIM SHOW/CLR/SAVE\n");
     printf(" PID             mostra Kp/Ki/Kd e como mudar\n");
     printf(" PID <kp> <ki> <kd> ('-' mantem) | KP/KI/KD <v> | PID SAVE\n");
-    printf(" PIDAUTO         auto-tune do PID (oscila a bola)\n");
+    printf(" PIDAUTO [kp ki kd]  ajuste fino do PID + auto-TRIM (parte dos ganhos atuais)\n");
     printf(" CAL             calibra a tela (4 cantos; centro derivado deles)\n");
     printf(" STEPPER         calibra o curso dos motores (MINIMO/MAXIMO)\n");
     printf(" ELIPSE          teste: mesa varre uma elipse (PARAR p/ sair)\n");
+    printf(" DANCE           roda a dancinha de inicializacao de novo\n");
+    printf(" CIRC            gira a bola num circulo suave no centro (PARAR p/ sair)\n");
     printf(" ZERO            marca ponto morto da tela (acumula) e salva\n");
     printf(" ZEROCLR         limpa os pontos mortos\n");
     printf(" SX <v> | SY <v> sinal do controle por eixo (+1/-1)\n");
@@ -691,6 +741,12 @@ static void auto_propose(void)
         case 5: ki = ki * dn; if (ki < 1.0e-5f) ki = 0.0f; break; /* ki- (pode zerar) */
         }
     }
+    /* trava perto da SEMENTE: ajuste fino não pode fugir para um regime instável */
+    kp = auto_clampf(kp, s_seed_kp * AUTO_DRIFT_LO, s_seed_kp * AUTO_DRIFT_HI);
+    kd = auto_clampf(kd, s_seed_kd * AUTO_DRIFT_LO, s_seed_kd * AUTO_DRIFT_HI);
+    if (s_seed_ki > 1.0e-6f)                       /* se a semente usa Ki, limita ±  */
+        ki = auto_clampf(ki, s_seed_ki * AUTO_DRIFT_LO, s_seed_ki * AUTO_DRIFT_HI);
+    /* travas absolutas (rede de segurança, fora do alcance da deriva normal) */
     kp = auto_clampf(kp, 1.0e-4f, 1.5e-2f);
     kd = auto_clampf(kd, 1.0e-3f, 6.0e-2f);
     ki = auto_clampf(ki, 0.0f,    1.0e-3f);
@@ -699,37 +755,50 @@ static void auto_propose(void)
 
 static void auto_trial_begin(void)
 {
-    s_auto_tstart = xTaskGetTickCount();
-    s_auto_errsum = 0.0f;
-    s_auto_errn   = 0;
+    s_auto_tstart   = xTaskGetTickCount();
+    s_auto_errsum   = 0.0f;
+    s_auto_spdsum   = 0.0f;
+    s_auto_errn     = 0;
+    s_auto_pprimed  = false;
+    s_auto_active   = true;
+    s_auto_recenter = false;
 }
 
 /* Fecha a tentativa: pontua (tempo na mesa + centragem), atualiza o melhor por
  * hill-climbing e propõe os próximos ganhos. fell=true se a bola caiu. */
 static void auto_trial_end(bool fell)
 {
+    if (!s_auto_active) return;     /* idempotente: já fechada (queda + perda do toque) */
+    s_auto_active = false;
+
     float t = (float)(xTaskGetTickCount() - s_auto_tstart) *
               (float)portTICK_PERIOD_MS / 1000.0f;
     float meanerr = (s_auto_errn > 0) ? (s_auto_errsum / (float)s_auto_errn) : 99.0f;
+    float meanspd = (s_auto_errn > 0) ? (s_auto_spdsum / (float)s_auto_errn) : 0.0f;
+
+    /* CUSTO = erro médio ao centro + AGITAÇÃO (velocidade média). Punir a agitação
+     * é o que impede a busca de subir o ganho até oscilar: um ajuste nervoso tem
+     * velocidade alta e perde para a semente, mesmo passando perto do centro. */
+    float cost = meanerr + AUTO_SPD_W * meanspd;
 
     /* PONTUAÇÃO (maior = melhor):
-     *  - SOBREVIVEU a janela -> score = -erro_medio (menos erro = melhor).
+     *  - SOBREVIVEU a janela -> score = -custo (menos erro E menos agitação).
      *  - CAIU -> fortemente penalizado (sempre pior que qualquer sobrevivente),
-     *    ordenado por quanto durou. Assim o sinal é o ERRO (contínuo, comparável)
-     *    e não o tempo (ruidoso), e cair nunca é "premiado". */
-    float score = fell ? (-200.0f + 5.0f * t) : (-meanerr);
+     *    ordenado por quanto durou; cair nunca é "premiado". */
+    float score = fell ? (-200.0f + 5.0f * t) : (-cost);
     s_auto_trial++;
 
     float cur_kp = s_pid_x.kp, cur_ki = s_pid_x.ki, cur_kd = s_pid_x.kd;
-    bool improved = (s_best_score <= -1.0e8f) || (score > s_best_score + 0.3f);
+    /* só aceita a troca com melhora CLARA (margem) — não persegue ruído de medida */
+    bool improved = (s_best_score <= -1.0e8f) || (score > s_best_score + AUTO_IMPROVE_MARG);
 
     if (improved) {
         s_best_kp = cur_kp; s_best_ki = cur_ki; s_best_kd = cur_kd;
         s_best_score = score;
         s_auto_since = 0;                 /* mantém o mesmo movimento (momentum) */
-        printf("PIDAUTO> #%d %s t=%.1fs err=%.0fmm score=%.1f -> MELHOR  Kp=%.2e Ki=%.2e Kd=%.2e\n",
-               s_auto_trial, fell ? "caiu" : "ok", (double)t, (double)meanerr, (double)score,
-               (double)cur_kp, (double)cur_ki, (double)cur_kd);
+        printf("PIDAUTO> #%d %s t=%.1fs err=%.0fmm agit=%.0fmm/s score=%.1f -> MELHOR  Kp=%.2e Ki=%.2e Kd=%.2e\n",
+               s_auto_trial, fell ? "caiu" : "ok", (double)t, (double)meanerr, (double)meanspd,
+               (double)score, (double)cur_kp, (double)cur_ki, (double)cur_kd);
     } else {
         s_auto_move = (s_auto_move + 1) % AUTO_NMOVES;
         s_auto_since++;
@@ -738,35 +807,51 @@ static void auto_trial_end(bool fell)
             if (s_auto_step < AUTO_STEP_MIN) s_auto_step = AUTO_STEP_MIN;
             s_auto_since = 0;
         }
-        printf("PIDAUTO> #%d %s t=%.1fs err=%.0fmm score=%.1f (melhor=%.1f) -> tenta outro\n",
-               s_auto_trial, fell ? "caiu" : "ok", (double)t, (double)meanerr,
+        printf("PIDAUTO> #%d %s t=%.1fs err=%.0fmm agit=%.0fmm/s score=%.1f (melhor=%.1f) -> tenta outro\n",
+               s_auto_trial, fell ? "caiu" : "ok", (double)t, (double)meanerr, (double)meanspd,
                (double)score, (double)s_best_score);
     }
     s_auto_baseline = false;
     auto_propose();
 }
 
-static void auto_start(void)
+/* seed_given=true -> parte de (kp,ki,kd) passados no comando;
+ * seed_given=false -> parte dos ganhos VIVOS atuais (os que já equilibram). */
+static void auto_start(bool seed_given, float kp, float ki, float kd)
 {
     if (!s_snap_touched) {
         printf("PIDAUTO> coloque a bola na mesa e digite PIDAUTO de novo.\n");
         return;
     }
     s_ellipse = false; s_stepper = false;
-    /* Parte SEMPRE de um baseline AMORTECIDO conhecido (defaults do firmware),
-     * que segura a bola. Assim as perturbações gentis não a derrubam e dá para
-     * medir o erro continuamente — não importa de que ganhos a sessão começou. */
-    s_best_kp = KP; s_best_ki = KI; s_best_kd = KD;
+    /* AJUSTE FINO: parte de ganhos que JÁ seguram a bola (atuais ou informados)
+     * e refina em torno deles com perturbações pequenas. Assim não desestabiliza
+     * partindo de valores ruins — usa o que você já sabe que funciona. */
+    if (seed_given) {
+        s_best_kp = kp; s_best_ki = ki; s_best_kd = kd;
+    } else {
+        s_best_kp = s_pid_x.kp; s_best_ki = s_pid_x.ki; s_best_kd = s_pid_x.kd;
+    }
+    /* guarda a semente: a busca não pode derivar para longe dela (estabilidade) */
+    s_seed_kp = s_best_kp; s_seed_ki = s_best_ki; s_seed_kd = s_best_kd;
     s_best_score = -1.0e9f;
     s_auto_move = 0; s_auto_since = 0; s_auto_step = AUTO_STEP0;
     s_auto_trial = 0; s_auto_baseline = true;
+    s_auto_trimmed = false; s_auto_low = false;
     s_pidauto = true;
     pid_reset(&s_pid_x); pid_reset(&s_pid_y);
-    auto_propose();          /* aplica o baseline seguro */
+    auto_propose();          /* aplica a semente (baseline) */
     auto_trial_begin();      /* cronometra já (a bola pode estar na mesa) */
-    printf("PIDAUTO> Tuning ADAPTATIVO. Parte de ganhos seguros e REFINA sozinho.\n");
+    printf("PIDAUTO> AJUSTE FINO. Parte de Kp=%.2e Ki=%.2e Kd=%.2e (%s) e REFINA.\n",
+           (double)s_best_kp, (double)s_best_ki, (double)s_best_kd,
+           seed_given ? "informados" : "ganhos atuais");
     printf("PIDAUTO> Deixe a bola na mesa — ele testa um ajuste a cada %.0fs sem derrubar.\n",
            (double)AUTO_TRIAL_MAX_S);
+    printf("PIDAUTO> Referência = CENTRO. Passar de %.0fmm do centro conta como QUEDA\n",
+           (double)AUTO_FALL_R_MM);
+    printf("PIDAUTO>   (a fita traz a bola de volta, mas em teoria ela teria caído).\n");
+    printf("PIDAUTO> Apos %.0fs com erro < %.0fmm, captura o TRIM (nivel) sozinho.\n",
+           (double)AUTO_TRIM_HOLD_S, (double)AUTO_TRIM_ERR_MM);
     printf("PIDAUTO> Quanto MENOR o 'err', melhor. PARAR aplica o melhor; 'PID SAVE' grava.\n");
 }
 
@@ -877,9 +962,16 @@ static void cmd_handle(char *s)
         return;
     }
 
-    /* PIDAUTO -> auto-tune adaptativo (balanceia e melhora pelo tempo na mesa). */
-    if (strcmp(s, "PIDAUTO") == 0 || strcmp(s, "AUTOPID") == 0) {
-        auto_start();
+    /* PIDAUTO -> ajuste fino adaptativo (refina os ganhos + captura TRIM sozinho).
+     *   PIDAUTO                parte dos ganhos ATUAIS (os que já equilibram)
+     *   PIDAUTO <kp> <ki> <kd> parte dos ganhos informados                     */
+    if (strncmp(s, "PIDAUTO", 7) == 0 || strncmp(s, "AUTOPID", 7) == 0) {
+        float kp, ki, kd;
+        if (sscanf(s + 7, "%f %f %f", &kp, &ki, &kd) == 3) {
+            auto_start(true, kp, ki, kd);
+        } else {
+            auto_start(false, 0.0f, 0.0f, 0.0f);
+        }
         return;
     }
 
@@ -925,7 +1017,35 @@ static void cmd_handle(char *s)
     }
     if (strcmp(s, "PARAR") == 0) {
         s_ellipse = false;
+        s_circle  = false;
         printf("ELIPSE,OFF\n");
+        printf("CIRC,OFF\n");
+        return;
+    }
+
+    /* CIRC -> liga/desliga o giro suave da BOLA num círculo em torno do centro
+     * (malha fechada: o setpoint gira e a bola segue). PARAR desliga.          */
+    if (strcmp(s, "CIRC") == 0 || strcmp(s, "CIRCULO") == 0 ||
+        strcmp(s, "CIRCLE") == 0) {
+        s_circle = !s_circle;
+        if (s_circle) {
+            s_ellipse = false; s_stepper = false; s_pidauto = false;
+            s_circle_phase = 0.0;
+            printf("CIRC,ON  (raio=%.0fmm, ~%.0fs/volta; PARAR para sair)\n",
+                   (double)CIRCLE_R_MM, (double)(1.0 / CIRCLE_HZ));
+        } else {
+            printf("CIRC,OFF\n");
+        }
+        return;
+    }
+
+    /* DANCE -> roda a dancinha de inicialização de novo. O laço de controle a
+     * executa (mesma task dos motores), então não conflita com o balanço.     */
+    if (strcmp(s, "DANCE") == 0 || strcmp(s, "DANCA") == 0 ||
+        strcmp(s, "DANCAR") == 0) {
+        s_ellipse = false; s_stepper = false; s_pidauto = false;
+        s_dance = true;
+        printf("DANCE,pedido\n");
         return;
     }
 
@@ -1034,6 +1154,134 @@ static void apply_tilt(double nx, double ny, double thoff[3])
     steppers_move_to_all(pos);
 }
 
+/* ── Dancinha de inicialização ─────────────────────────────────────────────
+ * Coreografia curta e agradável ao ligar (e re-executável por "DANCE"). Usa o
+ * curso calibrado dos motores (s_step_min..s_step_max) e a cinemática de tilt,
+ * SEMPRE preso aos limites. Se não houver curso calibrado, faz só um aceno
+ * gentil em tilt (amplitude pequena), por segurança. */
+
+/* prende um alvo de passo aos limites calibrados (se conhecidos) */
+static long dance_clamp(long v)
+{
+    if (s_step_min_set && v < s_step_min) v = s_step_min;
+    if (s_step_max_set && v > s_step_max) v = s_step_max;
+    return v;
+}
+
+/* pose por TILT (nx,ny) + deslocamento vertical dz (passos), presa aos limites */
+static void dance_tilt(double nx, double ny, long dz, bool block)
+{
+    long pos[STEPPER_COUNT];
+    for (int i = 0; i < STEPPER_COUNT; i++) {
+        double theta = machine_theta(&s_machine, i, GEO_HZ, nx, ny);
+        if (!isfinite(theta)) theta = s_ang_orig;
+        pos[i] = dance_clamp(s_level_steps + dz +
+                             lround((s_ang_orig - theta) * ANG_TO_STEP));
+    }
+    steppers_move_to_all(pos);
+    if (block) steppers_run_to_position_blocking();
+}
+
+/* pose por PASSO direto em cada braço (p/ ondas), presa aos limites */
+static void dance_steps(long a, long b, long c, bool block)
+{
+    long pos[STEPPER_COUNT] = { dance_clamp(a), dance_clamp(b), dance_clamp(c) };
+    steppers_move_to_all(pos);
+    if (block) steppers_run_to_position_blocking();
+}
+
+/* círculo de tilt suave (streaming): a borda da mesa "olha em volta" */
+static void dance_circle(double amp, double turns, int ms_per_turn)
+{
+    const int spt = 60;                       /* poses por volta */
+    int n  = (int)(turns * spt);
+    int dt = ms_per_turn / spt; if (dt < 10) dt = 10;
+    for (int k = 0; k <= n; k++) {
+        double ph = ELLIPSE_TWO_PI * (double)k / spt;
+        dance_tilt(amp * cos(ph), amp * sin(ph), 0, false);
+        vTaskDelay(pdMS_TO_TICKS(dt));
+    }
+}
+
+/* onda senoidal contínua: cada braço defasado 120° (ondulação rolante) */
+static void dance_wave(double amp_frac, double turns, int ms_per_turn)
+{
+    long amp = (long)((s_step_max - s_step_min) / 2 * amp_frac);
+    const double T3 = ELLIPSE_TWO_PI / 3.0;
+    const int spt = 60;
+    int n  = (int)(turns * spt);
+    int dt = ms_per_turn / spt; if (dt < 10) dt = 10;
+    for (int k = 0; k <= n; k++) {
+        double ph = ELLIPSE_TWO_PI * (double)k / spt;
+        dance_steps(s_level_steps + lround(amp * sin(ph)),
+                    s_level_steps + lround(amp * sin(ph - T3)),
+                    s_level_steps + lround(amp * sin(ph + T3)), false);
+        vTaskDelay(pdMS_TO_TICKS(dt));
+    }
+}
+
+static void startup_dance(void)
+{
+    /* velocidade expressiva durante a dança */
+    for (int i = 0; i < STEPPER_COUNT; i++) {
+        stepper_set_max_speed(i, SPEED_DANCE);
+        stepper_set_acceleration(i, ACCEL_DANCE);
+    }
+    printf("# ~ dancinha ~ :)\n");
+
+    bool have = (s_step_min_set && s_step_max_set && s_step_min < s_step_max);
+
+    if (!have) {
+        /* sem curso calibrado: só um aceno gentil em tilt (amplitude pequena) */
+        for (int r = 0; r < 2; r++) {
+            dance_tilt(0.0,  0.10, 0, true); vTaskDelay(pdMS_TO_TICKS(140));
+            dance_tilt(0.0, -0.10, 0, true); vTaskDelay(pdMS_TO_TICKS(140));
+        }
+        dance_circle(0.10, 1.0, 2600);
+        dance_tilt(0.0, 0.0, 0, true);
+    } else {
+        long half = (s_step_max - s_step_min) / 2;
+        long amp  = (long)(half * 0.85);      /* margem de 15% dos limites */
+        long ctr  = s_level_steps;
+
+        /* 1) acordar: "respira" — sobe e desce todos juntos 2x */
+        for (int r = 0; r < 2; r++) {
+            dance_steps(ctr + amp, ctr + amp, ctr + amp, true); vTaskDelay(pdMS_TO_TICKS(110));
+            dance_steps(ctr - amp, ctr - amp, ctr - amp, true); vTaskDelay(pdMS_TO_TICKS(110));
+        }
+        dance_steps(ctr, ctr, ctr, true); vTaskDelay(pdMS_TO_TICKS(150));
+
+        /* 2) olhar em volta: círculo de tilt 1.5 voltas (suave) */
+        dance_circle(0.15, 1.5, 2600);
+
+        /* 3) "sim": acena frente/trás 2x */
+        for (int r = 0; r < 2; r++) {
+            dance_tilt(0.0,  0.16, 0, true); vTaskDelay(pdMS_TO_TICKS(110));
+            dance_tilt(0.0, -0.16, 0, true); vTaskDelay(pdMS_TO_TICKS(110));
+        }
+        /* 4) "não": balança esq/dir 3x (rápido) */
+        for (int r = 0; r < 3; r++) {
+            dance_tilt( 0.16, 0.0, 0, true); vTaskDelay(pdMS_TO_TICKS(85));
+            dance_tilt(-0.16, 0.0, 0, true); vTaskDelay(pdMS_TO_TICKS(85));
+        }
+        dance_tilt(0.0, 0.0, 0, true); vTaskDelay(pdMS_TO_TICKS(120));
+
+        /* 5) onda rolante: braços defasados 120° (2 voltas) */
+        dance_wave(0.85, 2.0, 1700);
+
+        /* 6) final: gira rápido 1 volta e assenta no nível */
+        dance_circle(0.14, 1.0, 1300);
+        dance_tilt(0.0, 0.0, 0, true); vTaskDelay(pdMS_TO_TICKS(200));
+    }
+
+    /* restaura a velocidade de balanço para o controle normal */
+    for (int i = 0; i < STEPPER_COUNT; i++) {
+        stepper_set_max_speed(i, SPEED_BALANCE);
+        stepper_set_acceleration(i, ACCEL_BALANCE);
+    }
+    printf("# dancinha concluida.\n");
+}
+
 /* ── Entry point ──────────────────────────────────────────────────────────── */
 
 void control_run(void)
@@ -1131,6 +1379,9 @@ void control_run(void)
         vTaskDelay(pdMS_TO_TICKS(300));
     }
 
+    /* dancinha de boas-vindas (restaura a velocidade de balanço ao final) */
+    startup_dance();
+
     for (int i = 0; i < STEPPER_COUNT; i++) {
         stepper_set_max_speed(i, SPEED_BALANCE);
         stepper_set_acceleration(i, ACCEL_BALANCE);
@@ -1199,6 +1450,17 @@ void control_run(void)
         if (dt_real <= 0.0f) dt_real = LOOP_DT;
         if (dt_real > 0.1f) dt_real = LOOP_DT;  /* proteção contra overflow */
 
+        /* Pedido de dança (comando DANCE): roda aqui, na task dos motores, sem
+         * conflitar com o balanço. Bloqueia o laço durante a coreografia. */
+        if (s_dance) {
+            s_dance = false;
+            startup_dance();
+            pid_reset(&s_pid_x); pid_reset(&s_pid_y);
+            detected = false; presence = 0; absence = 0;
+            last_wake = xTaskGetTickCount();   /* evita dt gigante após a dança */
+            continue;
+        }
+
         double nx = 0.0, ny = 0.0;
 
         if (s_stepper) {
@@ -1249,25 +1511,94 @@ void control_run(void)
                 }
 
                 if (detected) {
+                    /* Setpoint: centro fixo, ou girando num círculo (modo CIRC). */
+                    float spx = SETPOINT_X_MM, spy = SETPOINT_Y_MM;
+                    if (s_circle) {
+                        s_circle_phase += ELLIPSE_TWO_PI * CIRCLE_HZ * dt_real;
+                        if (s_circle_phase > ELLIPSE_TWO_PI) s_circle_phase -= ELLIPSE_TWO_PI;
+                        spx += CIRCLE_R_MM * cosf((float)s_circle_phase);
+                        spy += CIRCLE_R_MM * sinf((float)s_circle_phase);
+                    }
                     if (touched) {
-                        float ox = pid_update(&s_pid_x, p.x_mm, SETPOINT_X_MM, dt_real);
-                        float oy = pid_update(&s_pid_y, p.y_mm, SETPOINT_Y_MM, dt_real);
+                        float ox = pid_update(&s_pid_x, p.x_mm, spx, dt_real);
+                        float oy = pid_update(&s_pid_y, p.y_mm, spy, dt_real);
                         nx = s_sign_x * ox;
                         ny = s_sign_y * oy;
                         last_nx = nx; last_ny = ny;   /* lembra p/ queda curta */
                     } else {
                         nx = last_nx; ny = last_ny;   /* segura durante a queda curta */
                     }
-                    /* Auto-tune: acumula erro (após acomodação) e fecha por tempo. */
-                    if (s_pidauto) {
-                        if ((now - s_auto_tstart) > pdMS_TO_TICKS((int)(AUTO_SETTLE_S * 1000))) {
-                            float ex = p.x_mm - SETPOINT_X_MM, ey = p.y_mm - SETPOINT_Y_MM;
-                            s_auto_errsum += sqrtf(ex * ex + ey * ey);
-                            s_auto_errn++;
-                        }
-                        if ((now - s_auto_tstart) > pdMS_TO_TICKS((int)(AUTO_TRIAL_MAX_S * 1000))) {
-                            auto_trial_end(false);   /* sucesso (ficou o tempo todo) */
-                            auto_trial_begin();      /* segue testando (bola ainda na mesa) */
+                    /* Auto-tune: referência = CENTRO da mesa. A distância ao centro
+                     * é o erro; se a bola passa do raio virtual, "teria caído" (a
+                     * fita só a traz de volta) -> conta como QUEDA. */
+                    if (s_pidauto && touched) {
+                        float ex = p.x_mm - SETPOINT_X_MM, ey = p.y_mm - SETPOINT_Y_MM;
+                        float r  = sqrtf(ex * ex + ey * ey);
+
+                        if (s_auto_recenter) {
+                            /* aguardando a bola voltar ao centro após queda virtual */
+                            if (r <= AUTO_RECENTER_R_MM) {
+                                printf("PIDAUTO> recentrou (%.0fmm) -> nova tentativa\n",
+                                       (double)r);
+                                auto_trial_begin();
+                            }
+                        } else if (r > AUTO_FALL_R_MM) {
+                            /* passou da borda virtual -> em teoria caiu da mesa */
+                            printf("PIDAUTO> bola a %.0fmm do centro (>%.0f) -> QUEDA VIRTUAL\n",
+                                   (double)r, (double)AUTO_FALL_R_MM);
+                            auto_trial_end(true);
+                            s_auto_recenter = true;  /* espera recentrar p/ próxima */
+                        } else {
+                            /* AUTO-TRIM: erro baixo por AUTO_TRIM_HOLD_S segundos
+                             * -> captura o nível da base (uma vez por sessão). */
+                            if (!s_auto_trimmed) {
+                                if (r <= AUTO_TRIM_ERR_MM) {
+                                    if (!s_auto_low) { s_auto_low = true; s_auto_low_since = now; }
+                                    else if ((now - s_auto_low_since) >
+                                             pdMS_TO_TICKS((int)(AUTO_TRIM_HOLD_S * 1000))) {
+                                        cmd_trim_capture();   /* viés do integral -> feedforward */
+                                        s_auto_trimmed = true;
+                                        printf("PIDAUTO> auto-TRIM: %.0fs com erro < %.0fmm -> nivel capturado.\n",
+                                               (double)AUTO_TRIM_HOLD_S, (double)AUTO_TRIM_ERR_MM);
+                                        /* re-baseline LIMPO: re-mede a semente já nivelada
+                                         * como referência antes de refinar os ganhos. */
+                                        s_auto_baseline = true;
+                                        s_best_score = -1.0e9f;
+                                        s_auto_move = 0; s_auto_since = 0;
+                                        s_auto_step = AUTO_STEP0;
+                                        auto_propose();       /* volta exatamente à semente */
+                                        auto_trial_begin();   /* mede limpo, já sem o offset */
+                                    }
+                                } else {
+                                    s_auto_low = false;       /* saiu da janela: reinicia o relógio */
+                                }
+                            }
+                            bool settled = (now - s_auto_tstart) >
+                                           pdMS_TO_TICKS((int)(AUTO_SETTLE_S * 1000));
+                            if (settled && !s_auto_baseline && r > AUTO_ABORT_R_MM) {
+                                /* ajuste perigoso: aborta JÁ, penaliza e volta ao melhor.
+                                 * (não aborta o baseline: a semente é a referência e a
+                                 *  bola pode ter sido colocada longe — deixa ela puxar) */
+                                printf("PIDAUTO> ajuste arriscado (%.0fmm) -> ABORTA e reverte.\n",
+                                       (double)r);
+                                auto_trial_end(true);    /* penaliza o movimento ruim */
+                                auto_trial_begin();      /* segue com ganhos seguros */
+                            } else {
+                                if (settled) {
+                                    s_auto_errsum += r;
+                                    /* AGITAÇÃO: velocidade da bola (mm/s) entre amostras */
+                                    if (s_auto_pprimed) {
+                                        float dx = p.x_mm - s_auto_px, dy = p.y_mm - s_auto_py;
+                                        s_auto_spdsum += sqrtf(dx * dx + dy * dy) / dt_real;
+                                    }
+                                    s_auto_errn++;
+                                }
+                                s_auto_px = p.x_mm; s_auto_py = p.y_mm; s_auto_pprimed = true;
+                                if ((now - s_auto_tstart) > pdMS_TO_TICKS((int)(AUTO_TRIAL_MAX_S * 1000))) {
+                                    auto_trial_end(false);   /* sobreviveu a janela */
+                                    auto_trial_begin();      /* segue testando */
+                                }
+                            }
                         }
                     }
                 }

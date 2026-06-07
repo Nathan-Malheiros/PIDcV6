@@ -92,7 +92,7 @@ PIDcV6/
 ├── sdkconfig.defaults     Defaults do SDK (sdkconfig é gerado no build)
 ├── main/                  Firmware C (ESP-IDF)
 │   ├── main.c             Entry point + modo MAPPING/CONTROL
-│   ├── control.c/.h       Laço 100 Hz + parser de comandos seriais + TRIM
+│   ├── control.c/.h       Laço 100 Hz + parser serial + TRIM + DANCE/CIRC
 │   ├── pid.c/.h           PID por eixo (deriv. filtrada + anti-windup)
 │   ├── kinematics.c/.h    Cinemática inversa 3RPS
 │   ├── steppers.c/.h      Driver STEP/DIR (perfil trapezoidal 10 kHz)
@@ -270,7 +270,9 @@ SAVED,<pid|touch|trim>                         confirmação de NVS salvo
 | `TRIM` · `TRIM SAVE` | Aprende/grava o viés de nível (base torta) |
 | `CAL` | Assistente de calibração da tela (4 cantos; centro derivado) |
 | `STEPPER` | Calibra o curso dos motores (MIN/MAX/MEIO) |
-| `PIDAUTO` · `ELIPSE` | Auto-tune adaptativo · teste de varredura elíptica |
+| `PIDAUTO [kp ki kd]` | Ajuste fino dos ganhos + auto-TRIM (parte dos ganhos atuais) |
+| `ELIPSE` · `DANCE` | Varredura elíptica (sem bola) · dancinha de exibição |
+| `CIRC` | Gira a bola num círculo suave no centro (com bola; `PARAR` sai) |
 | `ZERO` / `ZEROCLR` | Marca / limpa pontos mortos da tela |
 
 > Tudo pode ser feito por qualquer monitor serial (ou pelo `bb_tool` → monitor).
