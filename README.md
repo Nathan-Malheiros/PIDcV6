@@ -14,11 +14,12 @@ plataforma para manter a bola no centro.
 
 ```
             bola (tela resistiva)
-                  │  x_mm, y_mm  (50 Hz)
+                  │  x_mm, y_mm  (100 Hz)
                   ▼
      ┌──────────────────────────────┐
      │  PID_X(x_mm) → nx             │   firmware ESP32-S3
-     │  PID_Y(y_mm) → ny             │   (laço de 50 Hz)
+     │  PID_Y(y_mm) → ny             │   (laço de 100 Hz)
+     │  + viés de nível (TRIM)       │
      │  cinemática 3RPS → θA,θB,θC   │
      │  steppers (perfil trapezoidal)│
      └──────────────────────────────┘
@@ -82,19 +83,21 @@ Convenção de coordenadas após calibração:
 ## 3. Estrutura do projeto
 
 ```
-PIDcV2/
+PIDcV6/
 ├── README.md              Este arquivo (montagem + operação)
+├── SERIAL_COMMANDS.md     Referência completa dos comandos seriais
+├── bb_tool.bat/.ps1       Menu de build / flash / monitor (ESP-IDF)
 ├── TEORIA.md              Teoria de controle digital (PID, FT, ganhos)
 ├── CMakeLists.txt         Projeto ESP-IDF (target esp32s3)
 ├── sdkconfig.defaults     Defaults do SDK (sdkconfig é gerado no build)
 ├── main/                  Firmware C (ESP-IDF)
 │   ├── main.c             Entry point + modo MAPPING/CONTROL
-│   ├── control.c/.h       Laço 50 Hz + parser de comandos seriais
+│   ├── control.c/.h       Laço 100 Hz + parser de comandos seriais + TRIM
 │   ├── pid.c/.h           PID por eixo (deriv. filtrada + anti-windup)
 │   ├── kinematics.c/.h    Cinemática inversa 3RPS
 │   ├── steppers.c/.h      Driver STEP/DIR (perfil trapezoidal 10 kHz)
 │   ├── touch_screen.c/.h  Leitura resistiva 4 fios + calibração runtime
-│   └── cal_store.c/.h     Persistência NVS (ganhos PID + calibração)
+│   └── cal_store.c/.h     Persistência NVS (PID, calibração, curso, ZERO, TRIM)
 ├── tools/                 Ferramentas Python (PC)
 │   ├── calibrate.py/.bat  FERRAMENTA PRINCIPAL: calibração da tela, bola ao
 │   │                      vivo, orientação (gravar) e ajuste de PID em tempo real
@@ -108,16 +111,21 @@ PIDcV2/
 
 ---
 
-## 4. As duas ferramentas
+## 4. As ferramentas
 
-Há **duas** aplicações Python, com papéis distintos. Ambas leem porta/dimensões de
-`tools/config.py` e dependem de `pygame` + `pyserial`
-(`pip install -r tools/requirements.txt`).
+As aplicações Python leem porta/dimensões de `tools/config.py` e dependem de
+`pygame` + `pyserial` (`pip install -r tools/requirements.txt`).
 
-> **Build & flash** não têm GUI própria — usa-se o `idf.py` direto (ver §5). É o
-> jeito mais confiável de gravar o firmware. Depois da primeira gravação,
-> **tudo (calibração, orientação e PID) é ajustado ao vivo pelas ferramentas
-> abaixo, sem nunca mais rebuildar**.
+> **Build, flash e monitor** não têm GUI própria — use o **`bb_tool`** (menu
+> interativo na raiz do projeto, ver §5) ou o `idf.py` direto. Depois da primeira
+> gravação, **calibração, ganhos, sinais e o viés de nível (TRIM) são ajustados ao
+> vivo pelo terminal serial (ver `SERIAL_COMMANDS.md`), sem nunca mais rebuildar**.
+
+### 🔧 `bb_tool` — Build / Flash / Monitor (raiz do projeto)
+
+Menu interativo (`bb_tool.bat`) que carrega o ambiente ESP-IDF e oferece build,
+*fullclean* + *set-target* `esp32s3`, flash, monitor e flash+monitor. Porta padrão
+**COM8** (ajuste no menu). É o caminho recomendado para gravar e abrir o monitor.
 
 ### 🛠️ `calibrate.py` — Ferramenta principal de operação
 
@@ -200,19 +208,19 @@ python tools/PIDSimba.py --sim      # abre direto na simulação física
 
 ### Primeira configuração (hardware novo)
 
-1. Edite a porta COM em `tools/config.py`.
-2. **Grave o firmware** (uma vez) com o ESP-IDF carregado:
+1. Edite a porta COM em `tools/config.py` (e no `bb_tool` se não for COM8).
+2. **Grave o firmware** (uma vez) pelo `bb_tool` (flash) ou `idf.py`:
    ```
    idf.py build
-   idf.py -p COM5 flash monitor
+   idf.py -p COM8 flash monitor
    ```
-   Confirme no monitor: `Ball Balancer — Control Mode @ 50 Hz`. Feche o monitor
-   (Ctrl+]) para liberar a porta antes de abrir o `calibrate.py`.
-3. `calibrate.bat` → `ENTER` → coloque a bola nos **4 cantos** → em CAL_RESULTS
-   pressione **`N`** (envia ao NVS). → `Calibracao salva no NVS`.
-4. Tela **LIVE**: confirme que a bola na tela bate com a física. Se não, ajuste
-   `T` / `X` / `Y` e pressione **`G`** para gravar a orientação.
-5. Tecla **`P`** (PID): ajuste `KP/KI/KD` ao vivo → **`ESPAÇO`** salva no NVS.
+   Confirme no monitor: `Ball Balancer — Control Mode @ 100 Hz`. O console é o
+   **USB-Serial-JTAG** (conector USB nativo do ESP32-S3).
+3. **Calibre a tela** pelo terminal: `CAL` → coloque a bola nos **4 cantos**
+   (o centro é derivado deles) → `SALVAR`. (Alternativa visual: `calibrate.bat`.)
+4. **Calibre o curso dos motores:** `STEPPER` → `SOBE/DESCE`, `MIN`, `MAX` → `SALVAR`.
+5. **Ajuste o PID** ao vivo: `ERROR` (monitor de erro), `PID - - 0.012` (damping),
+   suba `Ki` até centralizar, `PID SAVE`. Depois `TRIM` + `TRIM SAVE` para a base torta.
 
 ### Boots seguintes
 
@@ -233,37 +241,40 @@ recalibrar nem rebuildar — só ligar.
 Tudo abaixo é aplicado **na hora** e pode ser persistido no NVS. É o que torna
 o tuning prático — você não recompila para testar um ganho.
 
-### Protocolo serial (UART0, 115200 baud)
+### Protocolo serial (USB-Serial-JTAG, 115200 baud)
 
-**Saída do firmware (50 Hz):**
+A referência completa está em **[SERIAL_COMMANDS.md](SERIAL_COMMANDS.md)**. Resumo:
+
+**Saída do firmware (telemetria com `SHOW`, 100 Hz):**
 
 ```
 POS,<x_raw>,<y_raw>,<x_mm>,<y_mm>            bola detectada
 NOTOUCH,<x_raw>,<y_raw>                       sem contato
 CTRL,<x>,<y>,<setx>,<sety>,<nx>,<ny>,<thA>,<thB>,<thC>
-GAINS,<kp>,<ki>,<kd>                          após ajuste de ganho
-SIGNS,<sx>,<sy>                               sinais de controle
+ERROR,ex=..,ey=..,dist=..mm                   com ERROR ligado (1 Hz)
+STATE,<PRONTO|ACTIVE|IDLE>                    transições da bola
+GAINS,<kp>,<ki>,<kd>   SIGNS,<sx>,<sy>   TRIM,<nx>,<ny>
 CAL,<xmin>,<xmax>,<ymin>,<ymax>,<fx>,<fy>,<sw>
-CORNER,<TL|TR|BL|BR>,<x_raw>,<y_raw>          canto capturado
-SAVED,<pid|touch>                             confirmação de NVS salvo
+SAVED,<pid|touch|trim>                         confirmação de NVS salvo
 ```
 
-**Comandos de entrada:**
+**Comandos principais:**
 
 | Comando | Efeito |
 |---|---|
-| `PID <kp> <ki> <kd>` | Ajusta os três ganhos (ambos os eixos) |
-| `KP <v>` / `KI <v>` / `KD <v>` | Ajusta um ganho por vez |
-| `PID SAVE` | Persiste os ganhos atuais no NVS |
-| `SX <v>` / `SY <v>` | Sinal do controle por eixo (`<0` → −1, senão +1) |
-| `CAL TL\|TR\|BL\|BR` | Captura o toque atual como aquele canto |
-| `CAL APPLY` | Calcula a calibração a partir dos 4 cantos |
-| `CAL SAVE` / `CAL SHOW` / `CAL RESET` | Persiste / exibe / reseta calibração |
-| `SETCAL <xmin> <xmax> <ymin> <ymax> <fx> <fy> <sw>` | Aplica calibração calculada no PC |
-| `?` | Exibe ganhos, sinais e calibração atuais |
+| `HELP` · `?` | Lista comandos · estado atual (GAINS/SIGNS/CAL) |
+| `SHOW` / `HIDDEN` | Liga / desliga telemetria |
+| `ERROR` | Imprime o erro (dist. do centro) a cada 1 s |
+| `PID <kp> <ki> <kd>` | Ajusta os três (`-` mantém o atual); `PID SAVE` grava |
+| `KP/KI/KD <v>` · `SX/SY <v>` | Um ganho por vez · sinal do controle por eixo |
+| `TRIM` · `TRIM SAVE` | Aprende/grava o viés de nível (base torta) |
+| `CAL` | Assistente de calibração da tela (4 cantos; centro derivado) |
+| `STEPPER` | Calibra o curso dos motores (MIN/MAX/MEIO) |
+| `PIDAUTO` · `ELIPSE` | Auto-tune adaptativo · teste de varredura elíptica |
+| `ZERO` / `ZEROCLR` | Marca / limpa pontos mortos da tela |
 
-> As telas Calibrar e PID do `calibrate.py` apenas montam esses comandos
-> para você — dá para fazer tudo na mão por qualquer monitor serial também.
+> Tudo pode ser feito por qualquer monitor serial (ou pelo `bb_tool` → monitor).
+> O `calibrate.py` também monta os comandos de calibração/PID por GUI.
 
 ---
 
@@ -271,7 +282,7 @@ SAVED,<pid|touch>                             confirmação de NVS salvo
 
 | Macro `BB_MODE` | Comportamento |
 |---|---|
-| `BB_MODE_CONTROL` (padrão) | Laço PID 50 Hz + cinemática + motores |
+| `BB_MODE_CONTROL` (padrão) | Laço PID 100 Hz + cinemática + motores |
 | `BB_MODE_MAPPING` | Só lê o touch e emite telemetria — sem motores |
 
 Compilar em modo mapeamento (útil só para depurar a tela):
@@ -298,15 +309,26 @@ do perfil trapezoidal estão em [TEORIA.md](TEORIA.md).
 
 ---
 
-## 9. Pendências
+## 9. Configuração atual e pendências
+
+**Estado validado em operação** (envie `?` para reler):
+
+```text
+GAINS,0.0006,3e-05,0.0001      # Kp=6e-4  Ki=3e-5  Kd=1e-4
+SIGNS,-1,-1                     # realimentação negativa (confirmado no rig)
+CAL,513,3297,355,3719,1,1,1    # calibração da tela (4 cantos)
+```
 
 | Item | Status |
 |---|---|
-| Medir geometria real (`GEO_D/E/F/G/HZ`) | Pendente |
-| Confirmar `MICROSTEPS` nos DIP switches | Pendente |
-| Validar homing (posição 0 = mesa nivelada) | Pendente |
-| Tunar KP/KI/KD no hardware (PID Tuner) | Pendente |
-| Sinal do controle `SX`/`SY` | Default corrigido para −1 (realimentação negativa, confere com PIDSimba). Confirmar no rig |
+| Sinais `SX`/`SY` (realimentação negativa) | ✅ Confirmado no rig (−1/−1) |
+| Calibração da tela (4 cantos) | ✅ Feita e salva no NVS |
+| Curso dos motores (`STEPPER`) | ✅ Calibrado (repouso no meio do curso) |
+| Detecção de toque (digital) + rejeição de outliers | ✅ Estável nos cantos |
+| Equilíbrio + `TRIM` para base torta | ✅ Operacional |
+| Medir geometria real (`GEO_D/E/F/G/HZ`) | Pendente (placeholders) |
+| Confirmar `MICROSTEPS` (DRV8825 em 1/16) | ✅ Verificado (M0/M1/M2 = L/L/H) |
+| Tuning fino de KP/KI/KD | Refinamento contínuo via `PID`/`PIDAUTO` |
 
 ---
 

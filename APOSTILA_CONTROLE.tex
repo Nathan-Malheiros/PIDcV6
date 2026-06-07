@@ -6,7 +6,7 @@
 %==============================================================================
 
 % --- Base de referencias embutida (BibTeX em arquivo unico) -------------------
-\begin{filecontents}{referencias.bib}
+\begin{filecontents}[overwrite]{referencias.bib}
 @book{ogata,
   author    = {Ogata, Katsuhiko},
   title     = {Engenharia de Controle Moderno},
@@ -46,7 +46,7 @@
   title        = {Ball Balancer},
   howpublished = {Instructables},
   year         = {2021},
-  note         = {Instructables, acesso online}
+  note         = {Dispon{\'i}vel em: https://www.instructables.com/Ball-Balancer/}
 }
 @manual{esp32s3,
   author       = {{Espressif Systems}},
@@ -60,7 +60,7 @@
 % --- Codificacao e idioma -----------------------------------------------------
 \usepackage[utf8]{inputenc}
 \usepackage[T1]{fontenc}
-\usepackage[brazilian]{babel}
+\usepackage[brazil]{babel}
 \usepackage{lmodern}
 \usepackage{microtype}
 
@@ -184,7 +184,7 @@
 
 %==============================================================================
 \begin{document}
-\pagenumbering{Alph}
+\frontmatter
 
 %------------------------------------------------------------------ CAPA -------
 \begin{titlepage}
@@ -219,7 +219,6 @@ $P(s)=A/s^2$, os ganhos $K_p,K_i,K_d$, a cinem\'atica inversa 3RPS e o
 firmware em C rodando a 100\,Hz no ESP32-S3.
 \end{tcolorbox}
 \end{titlepage}
-\frontmatter
 
 %------------------------------------------------------------------ PREFACIO ---
 \chapter*{Como usar esta apostila}
@@ -256,7 +255,7 @@ visto Controle antes --- construiremos tudo do zero.
 
 \begingroup
 \renewcommand{\arraystretch}{1.3}
-\begin{longtable}{>{\bfseries}p{2.2cm} >{\RaggedRight\arraybackslash}p{9.1cm} l}
+\begin{longtable}{>{\bfseries}l >{\RaggedRight\arraybackslash}p{10.5cm} l}
 \toprule
 S\'imbolo & Significado & Valor t\'ipico \\
 \midrule\endhead
@@ -268,7 +267,7 @@ $g$          & Acelera\c{c}\~ao da gravidade & $9810$ mm/s$^2$ \\
 $A$          & Ganho da planta, $A=\tfrac{5}{7}g$ & $\approx 7007$ mm/s$^2$ \\
 $P(s)$       & Fun\c{c}\~ao de transfer\^encia da planta & $A/s^2$ \\
 $C(s)$       & Fun\c{c}\~ao de transfer\^encia do controlador (PID) & --- \\
-$K_p,K_i,K_d$& Ganhos proporcional, integral e derivativo & ver Cap.~9 \\
+$K_p,K_i,K_d$& Ganhos proporcional, integral e derivativo & ver Cap.~\ref{cap:ganhos} \\
 $\zeta$      & Coeficiente de amortecimento & $0\!-\!\infty$ \\
 $\omega_n$   & Frequ\^encia natural n\~ao amortecida & rad/s \\
 $\omega_d$   & Frequ\^encia natural amortecida, $\omega_n\sqrt{1-\zeta^2}$ & rad/s \\
@@ -290,7 +289,7 @@ $(n_x,n_y)$  & Componentes do vetor normal da mesa & --- \\
 %##############################################################################
 
 %==============================================================================
-\chapter{Introdu\c{c}\~ao ao Problema}
+\chapter{Introdu\c{c}\~ao ao Problema}\label{cap:intro}
 %==============================================================================
 \index{Ball Balancer}
 
@@ -308,7 +307,7 @@ passo NEMA 17} em arranjo \textbf{3RPS} inclinam a plataforma; e um \textbf{ESP3
 roda dois controladores PID (um para X, outro para Y) a 100\,Hz.
 \end{projeto}
 
-\begin{figure}[htbp]\centering
+\begin{figure}[h]\centering
 \begin{tikzpicture}[scale=1.2]
   \fill[corprim!8] (-3,-1.4) rectangle (3,-1.0);
   \node[corcinza,font=\footnotesize] at (0,-1.2) {base / estrutura};
@@ -341,24 +340,93 @@ vis\'ivel a olho nu:
 Deixe a mesa parada e levemente torta: a bola \textbf{acelera} e \textbf{nunca
 para por conta pr\'opria} --- ela rola at\'e cair. N\~ao existe ``for\c{c}a de
 mola'' que a traga de volta. Em linguagem de controle, a planta tem
-\textbf{dois polos na origem} (Cap.~5): qualquer perturba\c{c}\~ao cresce sem
+\textbf{dois polos na origem} (Cap.~\ref{cap:ft}): qualquer perturba\c{c}\~ao cresce sem
 limite. \'E o controlador que \emph{cria}, artificialmente, a rigidez (via $K_p$)
 e o amortecimento (via $K_d$) que a f\'isica n\~ao oferece.
 
 \section{Os desafios do controle}
 \begin{enumerate}[leftmargin=1.5em]
-  \item \textbf{Estabilizar} algo que sozinho diverge (Cap.~7).
+  \item \textbf{Estabilizar} algo que sozinho diverge (Cap.~\ref{cap:estab}).
   \item \textbf{Amortecer} sem deixar lento demais --- equil\'ibrio entre $K_p$ e $K_d$.
   \item \textbf{Eliminar o desvio} causado pela mesa torta --- papel do $K_i$ (e do
-  \emph{feedforward} TRIM, Cap.~23).
-  \item \textbf{Rejeitar ru\'ido} do sensor sem amplific\'a-lo no derivativo (Cap.~18).
+  \emph{feedforward} TRIM, Cap.~\ref{cap:futuro}).
+  \item \textbf{Rejeitar ru\'ido} do sensor sem amplific\'a-lo no derivativo (Cap.~\ref{cap:filtro}).
   \item \textbf{Respeitar limites} f\'isicos: satura\c{c}\~ao de inclina\c{c}\~ao
-  ($\pm0{,}25$ rad) e de velocidade dos motores (anti-windup, Cap.~19).
-  \item Fazer tudo isso em \textbf{tempo discreto}, a cada 10\,ms (Cap.~14--17).
+  ($\pm0{,}25$ rad) e de velocidade dos motores (anti-windup, Cap.~\ref{cap:windup}).
+  \item Fazer tudo isso em \textbf{tempo discreto}, a cada 10\,ms (Parte~III).
 \end{enumerate}
 
 %==============================================================================
-\chapter{Modelagem F\'isica da Esfera}
+\chapter{Revis\~ao Matem\'atica Compacta}\label{cap:matrev}
+%==============================================================================
+\index{revisao matematica@revis\~ao matem\'atica}
+
+Antes de modelar a bola, vale alinhar cinco ferramentas. A meta aqui n\~ao \'e
+rigor, e sim \textbf{intui\c{c}\~ao}: o que cada conceito \emph{significa} para o
+nosso sistema.
+
+\section{Derivada --- taxa de varia\c{c}\~ao}
+A derivada mede \textbf{qu\~ao r\'apido} uma grandeza muda. Se $x(t)$ \'e a
+posi\c{c}\~ao da bola,
+\[
+\dot x = \frac{dx}{dt}\ \text{(velocidade)},\qquad
+\ddot x = \frac{d^2x}{dt^2}\ \text{(acelera\c{c}\~ao)}.
+\]
+\begin{intuicao}
+Derivar \'e perguntar \emph{``est\'a aumentando ou diminuindo, e com que pressa?''}.
+A velocidade \'e a derivada da posi\c{c}\~ao; a acelera\c{c}\~ao, a derivada da
+velocidade. O termo \textbf{D} do PID usa exatamente isto: olha a \emph{velocidade}
+da bola para antecipar para onde ela vai.
+\end{intuicao}
+
+\section{Integral --- acumula\c{c}\~ao}
+A integral \'e o \textbf{oposto} da derivada: \textbf{acumula} (soma) a grandeza ao
+longo do tempo --- a ``\'area sob a curva''.
+\[
+x(t) = x_0 + \int_0^t \dot x(\tau)\,d\tau.
+\]
+\begin{intuicao}
+Sabendo a velocidade a cada instante e \emph{somando}, descobre-se o quanto a bola
+andou. O termo \textbf{I} do PID acumula o \emph{erro} no tempo --- \'e a
+``mem\'oria'' que percebe um desvio teimoso (mesa torta) e o corrige.
+\end{intuicao}
+
+\section{Equa\c{c}\~oes diferenciais}
+Uma \textbf{equa\c{c}\~ao diferencial} relaciona uma fun\c{c}\~ao com suas
+derivadas. A f\'isica da bola \'e uma delas:
+\[
+\ddot x = A\,\alpha \quad(\text{``a acelera\c{c}\~ao \'e proporcional \`a inclina\c{c}\~ao''}).
+\]
+Resolv\^e-la \'e achar $x(t)$ a partir dessa regra --- tarefa que a Transformada de
+Laplace (Cap.~\ref{cap:laplace}) cumpre de forma \emph{alg\'ebrica}.
+
+\section{Vari\'aveis de estado}
+O \textbf{estado} \'e o conjunto m\'inimo de n\'umeros que resume tudo o que o
+sistema precisa de si para evoluir. Para a bola num eixo,
+\[
+\mathbf{x} = \begin{bmatrix} \text{posi\c{c}\~ao} \\[2pt] \text{velocidade}\end{bmatrix}.
+\]
+\begin{intuicao}
+Sabendo \emph{onde} a bola est\'a, \emph{com que velocidade}, e a inclina\c{c}\~ao
+aplicada, o futuro fica determinado. ``Os dois n\'umeros que importam'' s\~ao
+posi\c{c}\~ao e velocidade --- por isso a planta \'e de \textbf{segunda ordem}.
+\end{intuicao}
+
+\section{Sistema din\^amico}
+Um \textbf{sistema din\^amico} \'e algo cujo estado \textbf{evolui no tempo} segundo
+uma regra, em resposta a uma \textbf{entrada}:
+\begin{center}
+entrada (inclina\c{c}\~ao $\alpha$) $\;\rightarrow\;$ \fbox{sistema (bola)} $\;\rightarrow\;$ sa\'ida (posi\c{c}\~ao $x$).
+\end{center}
+\begin{projeto}
+Todo este cap\'itulo serve a uma pergunta: \emph{``dada a inclina\c{c}\~ao que
+comando, para onde vai a bola --- e como escolher a inclina\c{c}\~ao para que ela
+fique no centro?''}. Derivada, integral e equa\c{c}\~ao diferencial s\~ao a
+linguagem; o PID \'e a resposta.
+\end{projeto}
+
+%==============================================================================
+\chapter{Modelagem F\'isica da Esfera}\label{cap:modelagem}
 %==============================================================================
 \index{modelagem}
 
@@ -378,7 +446,7 @@ escorregar} sobre um plano inclinado de \^angulo $\alpha$. Ao longo do tampo age
   faz a bola \emph{girar} em vez de deslizar).
 \end{itemize}
 
-\begin{figure}[htbp]\centering
+\begin{figure}[h]\centering
 \begin{tikzpicture}[scale=1.5]
   \draw[corprim,very thick] (-2.2,-0.9) -- (2.2,0.9);
   \shade[ball color=coracc] (0,0.42) circle (0.42);
@@ -439,7 +507,7 @@ m\ddot{x} = mg\sin\alpha - \tfrac{2}{5}m\ddot{x}
 \end{equation}
 de onde sai, finalmente, a Eq.~\eqref{eq:planta-nl}: $\ddot{x} = \tfrac{5}{7}g\sin\alpha$.
 
-\begin{intuicao}[Por que apenas 5/7 da gravidade?]
+\begin{intuicao}[Por que ``apenas'' $5/7$ da gravidade?]
 Parte da energia que a gravidade fornece n\~ao vira velocidade de
 \emph{transla\c{c}\~ao}: ela vai \textbf{girar} a bola. Uma esfera maci\c{c}a
 ``gasta'' $2/7$ do empurr\~ao para rodar e sobra $5/7$ para andar. Por isso uma
@@ -447,15 +515,48 @@ bola desce a rampa mais devagar do que um bloco que desliza sem girar (esse teri
 fator $1$). Um anel/casca esf\'erica desceria ainda mais devagar.
 \end{intuicao}
 
+\section{Comparando esfera, cilindro e anel}
+O fator depende s\'o de \emph{como a massa se distribui} (do momento de in\'ercia
+$I=c\,m\rho^2$). Refazendo a dedu\c{c}\~ao com um $I$ gen\'erico, a acelera\c{c}\~ao
+fica $\ddot x=\dfrac{g\sin\alpha}{1+c}$:
+
+\begin{table}[h]\centering
+\caption{Quanto da gravidade vira ``andar'' para cada corpo que rola.}
+\label{tab:corpos}
+\begin{tabular}{lccc}
+\toprule
+Corpo & $I$ & fator $\dfrac{1}{1+c}$ & desce\dots \\
+\midrule
+Bloco deslizando (n\~ao gira) & $0$ & $1$ & mais r\'apido \\
+\textbf{Esfera maci\c{c}a (nossa bola)} & $\tfrac{2}{5}m\rho^2$ & $\mathbf{5/7\approx0{,}71}$ & --- \\
+Cilindro maci\c{c}o & $\tfrac{1}{2}m\rho^2$ & $2/3\approx0{,}67$ & um pouco mais devagar \\
+Anel / casca fina & $m\rho^2$ & $1/2=0{,}50$ & bem mais devagar \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{intuicao}[Para onde vai a energia da gravidade]
+A energia potencial perdida pela bola ao descer vira energia cin\'etica, que se
+\textbf{divide} em duas partes:
+\[
+\underbrace{mg\,h}_{\text{potencial}} \;=\;
+\underbrace{\tfrac12 m v^2}_{\text{transla\c{c}\~ao (andar)}} +
+\underbrace{\tfrac12 I \omega^2}_{\text{rota\c{c}\~ao (girar)}}.
+\]
+Quanto mais massa longe do centro (maior $I$), mais energia ``escapa'' para girar e
+menos sobra para andar. A esfera maci\c{c}a concentra massa perto do centro, ent\~ao
+guarda boa parte (5/7) para a transla\c{c}\~ao --- por isso \'e o corpo ideal para um
+Ball Balancer \'agil.
+\end{intuicao}
+
 \begin{projeto}[O fator vive no c\'odigo]
-Na simula\c{c}\~ao f\'isica, esse mesmo coeficiente aparece como
-\texttt{ROLL\_FACTOR = 5.0/7.0} no arquivo \texttt{tools/PIDSimba.py}.
-A f\'isica do firmware e a da simula\c{c}\~ao usam exatamente a
-Eq.~\eqref{eq:planta-nl}.
+Na simula\c{c}\~ao f\'isica (\texttt{tools/PIDSimba.py}) esse mesmo coeficiente
+aparece como \texttt{ROLL\_FACTOR = 5.0/7.0}. A f\'isica do firmware e a da
+simula\c{c}\~ao usam exatamente a Eq.~\eqref{eq:planta-nl}.
 \end{projeto}
 
 %==============================================================================
-\chapter{Lineariza\c{c}\~ao}
+\chapter{Lineariza\c{c}\~ao}\label{cap:linear}
 %==============================================================================
 \index{linearizacao@lineariza\c{c}\~ao}
 
@@ -463,7 +564,7 @@ A Eq.~\eqref{eq:planta-nl} \'e \textbf{n\~ao linear} por causa do $\sin\alpha$.
 Ferramentas como Laplace, polos e $\zeta/\omega_n$ exigem um modelo \textbf{linear}.
 A sa\'ida \'e a aproxima\c{c}\~ao de pequenos \^angulos.
 
-\section[A aproxima\c{c}\~ao seno de alfa aproximadamente alfa]{A aproxima\c{c}\~ao $\sin\alpha \approx \alpha$}
+\section{A aproxima\c{c}\~ao $\sin\alpha \approx \alpha$}
 A s\'erie de Taylor do seno em torno de zero \'e
 \begin{equation}
 \sin\alpha = \alpha - \frac{\alpha^3}{6} + \frac{\alpha^5}{120} - \cdots
@@ -488,7 +589,7 @@ Ou seja, mesmo no \textbf{extremo} do curso a lineariza\c{c}\~ao erra cerca de
 $1\%$ --- e na opera\c{c}\~ao normal (poucos graus) o erro \'e bem menor que isso.
 \end{exemplo}
 
-\begin{table}[htbp]\centering
+\begin{table}[h]\centering
 \caption{Qualidade da aproxima\c{c}\~ao $\sin\alpha\approx\alpha$.}
 \label{tab:lin}
 \begin{tabular}{cccc}
@@ -510,11 +611,11 @@ acelera\c{c}\~ao do que o modelo linear sup\~oe, e o controlador projetado ficar
 ``otimista'' (ganho efetivo menor que o previsto). Por isso a satura\c{c}\~ao em
 $0{,}25$ rad n\~ao \'e s\'o seguran\c{c}a mec\^anica: ela \textbf{mant\'em o
 sistema dentro da regi\~ao onde a teoria linear vale}. Operar a mesa em \^angulos
-muito maiores invalidaria todo o projeto de ganhos dos Cap.~9--12.
+muito maiores invalidaria todo o projeto de ganhos da Parte~II.
 \end{atencao}
 
 %==============================================================================
-\chapter{Transformada de Laplace}
+\chapter{Transformada de Laplace}\label{cap:laplace}
 %==============================================================================
 \index{Laplace}
 
@@ -538,7 +639,7 @@ Com condi\c{c}\~oes iniciais nulas,
 $\leftrightarrow$ dividir por $s$.
 \end{conceito}
 
-\section[Derivando P(s)=A/s2 passo a passo]{Derivando $P(s)=A/s^2$ passo a passo}
+\section{Derivando $P(s)=A/s^2$ passo a passo}
 Partimos da planta linearizada \eqref{eq:planta-lin}, chamando a entrada de
 $u=\alpha$ (a inclina\c{c}\~ao comandada) e $A=\tfrac{5}{7}g$:
 \begin{align}
@@ -552,7 +653,7 @@ s^2 X(s) &= A\,U(s). &&\text{(derivada segunda }\to s^2)\\
 \label{eq:plant}
 \end{equation}
 
-\begin{projeto}[De onde sai A aproximadamente 7007]
+\begin{projeto}[De onde sai o $A\approx 7007$]
 $A=\tfrac{5}{7}\,g$ com $g=9810$ mm/s$^2$ (gravidade em mil\'imetros, pois medimos
 a bola em mm). Logo $A=\tfrac{5}{7}\cdot 9810 \approx 7007$ mm/s$^2$ por radiano de
 inclina\c{c}\~ao. Esse n\'umero \'e a ``alavanca'' que liga inclina\c{c}\~ao a
@@ -560,7 +661,7 @@ acelera\c{c}\~ao em todo o projeto.
 \end{projeto}
 
 %==============================================================================
-\chapter{Fun\c{c}\~ao de Transfer\^encia da Planta}
+\chapter{Fun\c{c}\~ao de Transfer\^encia da Planta}\label{cap:ft}
 %==============================================================================
 \index{funcao de transferencia@fun\c{c}\~ao de transfer\^encia}\index{planta}
 
@@ -569,6 +670,23 @@ acelera\c{c}\~ao em todo o projeto.
 respondendo \`a inclina\c{c}\~ao''. Sua fun\c{c}\~ao de transfer\^encia
 $P(s)=A/s^2$ resume \emph{toda} a din\^amica: dada uma inclina\c{c}\~ao $U(s)$, ela
 diz qual ser\'a a posi\c{c}\~ao $X(s)$.
+
+\begin{intuicao}[Lendo $P(s)=A/s^2$ por partes]
+\textbf{Numerador ($A$):} \'e o ``ganho/alavanca'' da planta --- \emph{quanta}
+acelera\c{c}\~ao cada radiano de inclina\c{c}\~ao gera ($A\approx7007$ mm/s$^2$).
+Como n\~ao h\'a $s$ no numerador, \textbf{n\~ao h\'a zeros}: a planta n\~ao
+``real\c{c}a'' nenhuma frequ\^encia, ela apenas integra.\\
+\textbf{Denominador ($s^2$):} \'e a \textbf{din\^amica}. Cada $s$ no denominador
+significa ``integrar uma vez''; dois $s$ significam integrar \emph{duas} vezes.
+\end{intuicao}
+
+\begin{intuicao}[Por que surgem \emph{dois} integradores --- e de forma natural]
+\'E pura f\'isica, n\~ao escolha de projeto. A inclina\c{c}\~ao gera
+\textbf{acelera\c{c}\~ao} ($\ddot x = A\alpha$); mas o que o sensor mede \'e
+\textbf{posi\c{c}\~ao}. Para ir de uma \`a outra, a natureza \emph{integra duas
+vezes}: acelera\c{c}\~ao $\to$ velocidade $\to$ posi\c{c}\~ao. Esses dois ``integrar''
+s\~ao, exatamente, os dois fatores $1/s$ --- e os dois polos na origem.
+\end{intuicao}
 
 \section{Polos e zeros: significado f\'isico}
 \index{polos}\index{zeros}
@@ -580,7 +698,7 @@ numerador \'e a constante $A$: \textbf{n\~ao h\'a zeros}, e h\'a um \textbf{polo
 duplo em} $s=0$.
 \end{conceito}
 
-\begin{figure}[htbp]\centering
+\begin{figure}[h]\centering
 \begin{tikzpicture}[scale=1.0]
   \draw[seta] (-2.6,0) -- (2.6,0) node[right,font=\footnotesize]{$\mathrm{Re}\,s$};
   \draw[seta] (0,-2.0) -- (0,2.0) node[above,font=\footnotesize]{$\mathrm{Im}\,s$};
@@ -595,6 +713,26 @@ duplo em} $s=0$.
 \caption{Plano-$s$ da planta: dois polos exatamente na origem (fronteira da estabilidade).}
 \label{fig:splane}
 \end{figure}
+
+\begin{intuicao}[Polo = a ``tend\^encia natural'' do sistema]
+Um polo descreve como o sistema se comporta \emph{sozinho}, sem ningu\'em mexer ---
+e a posi\c{c}\~ao dele no plano-$s$ j\'a conta a hist\'oria toda.
+\end{intuicao}
+
+\begin{table}[h]\centering
+\caption{Onde est\'a o polo $\Rightarrow$ como o sistema reage (com o exemplo da bola).}
+\label{tab:polos}
+\small
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+Polo\dots & Comportamento natural & No Ball Balancer \\
+\midrule
+\`a \textbf{esquerda} ($\sigma<0$) & decai sozinho (\textbf{est\'avel}) & o alvo: o controlador puxa os polos para c\'a \\
+na \textbf{origem} ($\sigma=0$) & nem cresce nem decai (\textbf{marginal}) & a planta crua --- a bola n\~ao volta nem cai sozinha \\
+\`a \textbf{direita} ($\sigma>0$) & cresce sem limite (\textbf{inst\'avel}) & sinal/ganho errado: a mesa \emph{empurra} a bola para fora \\
+\bottomrule
+\end{tabularx}
+\end{table}
 
 \section{O que significam dois polos na origem}
 Cada $1/s$ \'e um \textbf{integrador}. Dois polos na origem $=$ \textbf{duplo
@@ -625,7 +763,7 @@ adicionar o termo integral do PID. O $K_i$, aqui, serve principalmente contra
 %##############################################################################
 
 %==============================================================================
-\chapter{Diagramas de Blocos}
+\chapter{Diagramas de Blocos}\label{cap:blocos}
 %==============================================================================
 \index{diagrama de blocos}
 
@@ -633,8 +771,8 @@ Diagramas de blocos mostram o \textbf{fluxo de sinais}. Vamos do mais detalhado
 (o sistema f\'isico real) ao mais abstrato (malha fechada cl\'assica).
 
 \section{Sistema real (cascata completa)}
-\begin{figure}[htbp]\centering
-\begin{tikzpicture}[node distance=11mm and 8mm,scale=0.86,transform shape]
+\begin{figure}[h]\centering
+\begin{tikzpicture}[node distance=11mm and 12mm]
   \node[soma] (s) {};
   \node[left=of s] (r) {$r$};
   \node[bloco,right=of s] (pid) {PID\\ $C(s)$};
@@ -658,9 +796,9 @@ Diagramas de blocos mostram o \textbf{fluxo de sinais}. Vamos do mais detalhado
 
 \section{Sistema simplificado (controle puro)}
 A cinem\'atica e os motores s\~ao r\'apidos e essencialmente \textbf{est\'aticos}
-perante a din\^amica lenta da bola (Cap.~8 e 21): podemos coloc\'a-los como ganho
+perante a din\^amica lenta da bola (Cap.~\ref{cap:arq}): podemos coloc\'a-los como ganho
 unit\'ario e enxergar o miolo do controle.
-\begin{figure}[htbp]\centering
+\begin{figure}[h]\centering
 \begin{tikzpicture}[node distance=12mm and 16mm]
   \node[soma] (s) {};
   \node[left=of s] (r) {$r$};
@@ -688,7 +826,7 @@ A fun\c{c}\~ao de transfer\^encia de malha fechada (entrada $r$, sa\'ida $x$) \'
 O sinal de \textbf{menos} no somador (realimenta\c{c}\~ao \emph{negativa}) \'e o que
 faz o sistema \emph{corrigir} o erro em vez de amplific\'a-lo.
 
-\begin{projeto}[O sinal no firmware: \texttt{TILT\_SIGN = -1}]
+\begin{projeto}[O sinal no firmware: \texttt{TILT\_SIGN} $=-1$]
 O PID calcula $u=K_p\,e+\cdots$ com $e=\text{medida}-\text{setpoint}$. Para a mesa
 inclinar no sentido que traz a bola de volta, aplica-se $n_x=-u$
 (\texttt{TILT\_SIGN\_X = -1.0f} em \texttt{control.c}). Se um eixo empurrar a bola
@@ -697,7 +835,7 @@ para longe, basta inverter aquele sinal ao vivo: \texttt{SX +1} ou \texttt{SY +1
 \end{projeto}
 
 %==============================================================================
-\chapter{Estabilidade}
+\chapter{Estabilidade}\label{cap:estab}
 %==============================================================================
 \index{estabilidade}
 
@@ -725,7 +863,7 @@ s^2 + A K_d\, s + A K_p = 0.
 Pelo crit\'erio de Routh--Hurwitz, um polin\^omio de 2.\textsuperscript{a} ordem
 $s^2+a_1 s+a_0$ tem ambas as ra\'izes no semiplano esquerdo \emph{se e somente se}
 $a_1>0$ e $a_0>0$. Aqui $a_1=AK_d$ e $a_0=AK_p$: basta $K_p>0$ e $K_d>0$.
-\begin{atencao}[O ganho derivativo traz a estabilidade]
+\begin{atencao}[O $K_d$ \'e quem traz a estabilidade]
 Sem o termo derivativo ($K_d=0$), a Eq.~\eqref{eq:carac-pd} vira $s^2+AK_p=0$, com
 ra\'izes $\pm j\sqrt{AK_p}$ --- \emph{de novo} sobre o eixo imagin\'ario:
 oscila\c{c}\~ao n\~ao amortecida. \textbf{\'E o $K_d$ que empurra os polos para a
@@ -734,7 +872,7 @@ esquerda} e amortece. Guarde isto: num duplo integrador, derivativo n\~ao \'e
 \end{atencao}
 
 %==============================================================================
-\chapter{O Controlador PID}
+\chapter{O Controlador PID}\label{cap:pid}
 %==============================================================================
 \index{PID}
 
@@ -749,7 +887,37 @@ Cada termo olha para um ``tempo'': o \textbf{P} reage ao erro \emph{agora}, o
 \textbf{I} acumula o \emph{passado}, e o \textbf{D} antecipa a tend\^encia
 (\emph{futuro}).
 
-\section[Kp --- proporcional]{$K_p$ --- proporcional}
+\begin{intuicao}[As tr\^es analogias mec\^anicas]
+A forma mais f\'acil de ``sentir'' o PID \'e imagin\'a-lo como tr\^es pe\c{c}as
+mec\^anicas agindo sobre a bola:
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{$K_p$ = mola virtual.} Puxa a bola de volta com for\c{c}a
+  proporcional ao \emph{quanto} ela se afastou. S\'o mola, por\'em, oscila.
+  \item \textbf{$K_d$ = amortecedor.} Op\~oe-se \`a \emph{velocidade} da bola, como
+  um amortecedor de carro. \'E ele que ``segura'' a oscila\c{c}\~ao da mola.
+  \item \textbf{$K_i$ = mem\'oria acumulativa.} Lembra de um desvio que
+  \emph{insiste} (mesa torta) e vai inclinando mais at\'e zer\'a-lo.
+\end{itemize}
+Mola + amortecedor + mem\'oria: \'e literalmente um sistema massa-mola-amortecedor
+que \emph{voc\^e} projeta via $K_p,K_d$ e ajusta o ponto de equil\'ibrio via $K_i$.
+\end{intuicao}
+
+\begin{table}[h]\centering
+\caption{Efeito de aumentar cada ganho sobre a trajet\'oria da bola.}
+\label{tab:pidresumo}
+\small
+\begin{tabularx}{\textwidth}{l l X X}
+\toprule
+Ganho & Analogia & Se \textbf{aumenta} & Se \textbf{falta} \\
+\midrule
+$K_p$ & mola & mais r\'apido; em excesso, \textbf{oscila} & mole, lento, n\~ao chega \\
+$K_d$ & amortecedor & menos overshoot, mais firme & \textbf{oscila}/instabiliza; amplifica ru\'ido se em excesso \\
+$K_i$ & mem\'oria & zera o desvio fixo & desvio fixo \emph{persiste}; em excesso, \emph{windup} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{$K_p$ --- proporcional}
 \index{Kp@$K_p$}
 \textbf{Interpreta\c{c}\~ao f\'isica:} rigidez de uma ``mola virtual''. Quanto mais
 longe do centro, mais a mesa inclina para empurrar a bola de volta.
@@ -759,19 +927,19 @@ longe do centro, mais a mesa inclina para empurrar a bola de volta.
   \item \textbf{Diminui $K_p$}: resposta mole e lenta; a bola demora a voltar.
 \end{itemize}
 
-\section[Kd --- derivativo]{$K_d$ --- derivativo}
+\section{$K_d$ --- derivativo}
 \index{Kd@$K_d$}
 \textbf{Interpreta\c{c}\~ao f\'isica:} amortecimento que reage \`a \emph{velocidade}
 da bola. Se a bola corre para o centro r\'apido demais, o D ``segura'' antes que ela
 passe do ponto.
 \begin{itemize}[leftmargin=1.4em]
   \item \textbf{Aumenta $K_d$}: mais amortecimento, menos overshoot; em excesso,
-  lentid\~ao e \textbf{amplifica\c{c}\~ao de ru\'ido} (Cap.~18).
+  lentid\~ao e \textbf{amplifica\c{c}\~ao de ru\'ido} (Cap.~\ref{cap:filtro}).
   \item \textbf{Diminui $K_d$}: mais overshoot e oscila\c{c}\~ao; em $K_d\to0$,
-  instabilidade marginal (Cap.~7).
+  instabilidade marginal (Cap.~\ref{cap:estab}).
 \end{itemize}
 
-\section[Ki --- integral]{$K_i$ --- integral}
+\section{$K_i$ --- integral}
 \index{Ki@$K_i$}
 \textbf{Interpreta\c{c}\~ao f\'isica:} mem\'oria que elimina desvio
 \emph{persistente}. Se a bola insiste em ficar deslocada (mesa torta), o integral
@@ -782,7 +950,7 @@ acumula esse erro e adiciona a inclina\c{c}\~ao constante que falta.
   \item \textbf{Diminui $K_i$}: desvio some devagar (ou ``nunca'', na pr\'atica).
 \end{itemize}
 
-\begin{figure}[htbp]\centering
+\begin{figure}[h]\centering
 \begin{tikzpicture}
 \begin{axis}[width=12.5cm,height=6.2cm,xlabel={tempo (s)},ylabel={posi\c{c}\~ao (norm.)},
   xmin=0,xmax=6,ymin=0,ymax=1.6,legend pos=south east,grid=both,
@@ -808,24 +976,24 @@ acumula esse erro e adiciona a inclina\c{c}\~ao constante que falta.
 \begin{projeto}[Os tr\^es termos no seu firmware]
 Em \texttt{pid.c}, a linha \texttt{out = p->kp*err + p->ki*p->integ + p->kd*deriv;}
 \'e literalmente $u=K_p e+K_i\!\int e+K_d\dot e$. O $K_i$ combate a
-\textbf{base torta} (Cap.~23), e o firmware ainda oferece o \textbf{TRIM}, um
+\textbf{base torta} (Cap.~\ref{cap:futuro}), e o firmware ainda oferece o \textbf{TRIM}, um
 \emph{feedforward} que faz o mesmo trabalho do integral, por\'em instantaneamente.
 \end{projeto}
 
 %==============================================================================
-\chapter{Como os Ganhos Foram Obtidos}
+\chapter{Como os Ganhos Foram Obtidos}\label{cap:ganhos}
 %==============================================================================
 \index{alocacao de polos@aloca\c{c}\~ao de polos}
 
-\section[Tr\^es caminhos para escolher Kp, Ki, Kd]{Tr\^es caminhos para escolher $K_p,K_i,K_d$}
+\section{Tr\^es caminhos para escolher $K_p,K_i,K_d$}
 \begin{enumerate}[leftmargin=1.5em]
   \item \textbf{Aloca\c{c}\~ao de polos} (anal\'itico): escolhe-se \emph{onde} os
   polos de malha fechada devem ficar (a partir de requisitos de $\zeta,\omega_n$) e
   resolve-se para os ganhos. \'E o m\'etodo do TCC de refer\^encia~\cite{cordeiro}.
   \item \textbf{Ziegler--Nichols} (experimental): leva o sistema ao limite da
-  oscila\c{c}\~ao e usa tabelas (Cap.~13).
+  oscila\c{c}\~ao e usa tabelas (Cap.~\ref{cap:zn}).
   \item \textbf{Tentativa e erro guiada} (pr\'atico): sobe $K_p$, depois $K_d$,
-  depois um toque de $K_i$ --- \'e como se faz o ajuste fino no rig (Cap.~22).
+  depois um toque de $K_i$ --- \'e como se faz o ajuste fino no rig (Cap.~\ref{cap:sintonia}).
 \end{enumerate}
 
 \section{Aloca\c{c}\~ao de polos passo a passo}
@@ -849,16 +1017,16 @@ Igualando coeficiente a coeficiente com \eqref{eq:carac3}:
 \label{eq:ganhos}
 \end{equation}
 
-\subsection[Dos requisitos a zeta e omega n]{Dos requisitos a $\zeta$ e $\omega_n$}
+\subsection{Dos requisitos a $\zeta$ e $\omega_n$}
 Requisitos do projeto: sobressinal $PO\le 7{,}5\%$ e acomoda\c{c}\~ao
-$t_s\le 2{,}5$ s. Pelas f\'ormulas de 2.\textsuperscript{a} ordem (Cap.~10--12):
+$t_s\le 2{,}5$ s. Pelas f\'ormulas de 2.\textsuperscript{a} ordem (Cap.~\ref{cap:zeta}--\ref{cap:tempos}):
 \begin{equation}
 \zeta=\sqrt{\frac{\ln^2(PO/100)}{\pi^2+\ln^2(PO/100)}}\approx 0{,}636,
 \qquad
 \omega_n\approx 2{,}19\ \text{rad/s}.
 \end{equation}
 
-\begin{exemplo}[Ganhos resultantes com po igual a 1 e A igual a 7007]
+\begin{exemplo}[Ganhos resultantes (com $p_o=1$ e $A=7007$)]
 Substituindo $\zeta=0{,}636$, $\omega_n=2{,}19$, $p_o=1$ em \eqref{eq:ganhos}:
 \[
 K_d=\frac{2(0{,}636)(2{,}19)+1}{7007}\approx 5{,}4\times10^{-4},\quad
@@ -870,7 +1038,7 @@ Esses s\~ao os ganhos ``de projeto'' usados na simula\c{c}\~ao
 \end{exemplo}
 
 \section{Comparativo dos conjuntos de ganhos do projeto}
-\begin{table}[htbp]\centering
+\begin{table}[h]\centering
 \caption{Conjuntos de ganhos: projeto (anal\'itico), default do firmware e o que est\'a em opera\c{c}\~ao.}
 \label{tab:ganhos}
 \small
@@ -886,7 +1054,6 @@ Default firmware & $8{,}0\!\times\!10^{-4}$ & $2{,}0\!\times\!10^{-5}$ & $1{,}2\
 \end{tabularx}
 \end{table}
 
-\clearpage
 \begin{intuicao}[Por que tantos conjuntos diferentes?]
 Os ganhos \emph{anal\'iticos} valem para o modelo ideal sem atraso. O hardware tem
 atraso de sensor, ru\'ido e satura\c{c}\~ao, ent\~ao os ganhos de \emph{opera\c{c}\~ao}
@@ -896,7 +1063,7 @@ saem da mesma teoria; mudam as prioridades (ideal vs.\ robusto).
 \end{intuicao}
 
 %==============================================================================
-\chapter[Zeta e omega n]{$\zeta$ (Zeta) e $\omega_n$}
+\chapter{$\zeta$ (Zeta) e $\omega_n$}\label{cap:zeta}
 %==============================================================================
 \index{zeta@$\zeta$}\index{omega n@$\omega_n$}
 
@@ -906,11 +1073,11 @@ Todo sistema de 2.\textsuperscript{a} ordem padr\~ao escreve-se como
 \end{equation}
 Dois n\'umeros resumem \emph{tudo} sobre a resposta: $\omega_n$ e $\zeta$.
 
-\section[Frequ\^encia natural omega n]{Frequ\^encia natural $\omega_n$}
+\section{Frequ\^encia natural $\omega_n$}
 \'E a velocidade ``de rel\'ogio'' do sistema: quanto maior $\omega_n$, mais
 r\'apida a resposta. Na nossa malha PD, $\omega_n=\sqrt{A K_p}$.
 
-\section[Coeficiente de amortecimento zeta]{Coeficiente de amortecimento $\zeta$}
+\section{Coeficiente de amortecimento $\zeta$}
 Mede \emph{quanto} a oscila\c{c}\~ao \'e atenuada:
 \begin{center}
 \begin{tabular}{ll}
@@ -922,7 +1089,7 @@ $\zeta>1$ & \textbf{sobreamortecido} (lento, sem overshoot) \\
 \end{center}
 Na malha PD, $\zeta=\dfrac{K_d}{2}\sqrt{\dfrac{A}{K_p}}$.
 
-\begin{figure}[htbp]\centering
+\begin{figure}[h]\centering
 \begin{tikzpicture}
 \begin{axis}[width=12.5cm,height=6.4cm,xlabel={$\omega_n t$ (adimensional)},
   ylabel={resposta ao degrau},xmin=0,xmax=14,ymin=0,ymax=1.8,
@@ -948,7 +1115,7 @@ Na malha PD, $\zeta=\dfrac{K_d}{2}\sqrt{\dfrac{A}{K_p}}$.
 \label{fig:zeta}
 \end{figure}
 
-\begin{exemplo}[Zeta dos conjuntos reais (parte PD)]
+\begin{exemplo}[$\zeta$ dos conjuntos reais (parte PD)]
 Com $A=7007$:
 \begin{itemize}[leftmargin=1.4em]
   \item \textbf{Default} ($K_p=8\!\times\!10^{-4},K_d=1{,}2\!\times\!10^{-2}$):
@@ -963,8 +1130,23 @@ mesa ``surta'' sob qualquer perturba\c{c}\~ao se n\~ao houver as prote\c{c}\~oes
 do firmware.
 \end{exemplo}
 
+\begin{projeto}[O que voc\^e \emph{v\^e} na mesa quando $\zeta$ e $\omega_n$ mudam]
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{$\zeta$ baixo} (pouco $K_d$): a bola \textbf{passa do centro v\'arias
+  vezes}, vai-e-volta, demora a assentar --- e ``surta'' a qualquer empurr\~ao.
+  \item \textbf{$\zeta\approx1$} (bom $K_d$): a bola chega ao centro \textbf{firme,
+  sem passar do ponto}. \'E o alvo da sintonia.
+  \item \textbf{$\zeta$ alto} (muito $K_d$): a bola volta \textbf{devagar, arrastada},
+  como se estivesse em mel.
+  \item \textbf{$\omega_n$ maior} (mais $K_p$): \textbf{tudo fica mais r\'apido},
+  corre\c{c}\~oes mais en\'ergicas. Mas como $\zeta=\tfrac{K_d}{2}\sqrt{A/K_p}$
+  \emph{cai} quando $K_p$ sobe, aumentar $K_p$ \emph{sozinho} deixa a bola r\'apida
+  \textbf{e} mais oscilat\'oria --- por isso $K_p$ e $K_d$ s\~ao ajustados juntos.
+\end{itemize}
+\end{projeto}
+
 %==============================================================================
-\chapter{Sobressinal (Overshoot)}
+\chapter{Sobressinal (Overshoot)}\label{cap:overshoot}
 %==============================================================================
 \index{overshoot}\index{sobressinal}
 
@@ -972,7 +1154,7 @@ do firmware.
 \textbf{Overshoot} ($M_p$) \'e o quanto a resposta \emph{ultrapassa} o valor final
 antes de assentar. Na mesa: a bola passa do centro e volta.
 
-\section[Rela\c{c}\~ao com zeta e f\'ormula]{Rela\c{c}\~ao com $\zeta$ e f\'ormula}
+\section{Rela\c{c}\~ao com $\zeta$ e f\'ormula}
 Para o sistema de 2.\textsuperscript{a} ordem subamortecido,
 \begin{equation}
 \boxed{\ M_p = \exp\!\left(\dfrac{-\zeta\pi}{\sqrt{1-\zeta^2}}\right)\times 100\%\ }
@@ -989,10 +1171,10 @@ Com $\zeta=0{,}636$:
 M_p=\exp\!\left(\frac{-0{,}636\,\pi}{\sqrt{1-0{,}636^2}}\right)
 =\exp\!\left(\frac{-1{,}998}{0{,}772}\right)=\exp(-2{,}589)\approx 0{,}075=7{,}5\%.
 \]
-Confere com o requisito $PO\le7{,}5\%$ usado para escolher $\zeta$ no Cap.~9.
+Confere com o requisito $PO\le7{,}5\%$ usado para escolher $\zeta$ no Cap.~\ref{cap:ganhos}.
 \end{exemplo}
 
-\begin{table}[htbp]\centering
+\begin{table}[h]\centering
 \caption{Overshoot em fun\c{c}\~ao de $\zeta$.}
 \label{tab:mp}
 \begin{tabular}{cc}
@@ -1003,7 +1185,7 @@ Confere com o requisito $PO\le7{,}5\%$ usado para escolher $\zeta$ no Cap.~9.
 \end{table}
 
 %==============================================================================
-\chapter{Tempos de Resposta}
+\chapter{Tempos de Resposta}\label{cap:tempos}
 %==============================================================================
 \index{tempo de acomodacao@tempo de acomoda\c{c}\~ao}
 
@@ -1022,7 +1204,7 @@ t_r &\approx \frac{1{,}8}{\omega_n}, &
 t_s &\approx \frac{4}{\zeta\omega_n}\ (\text{crit\'erio de }2\%).
 \end{align}
 
-\begin{figure}[htbp]\centering
+\begin{figure}[h]\centering
 \begin{tikzpicture}
 \begin{axis}[width=12.5cm,height=6.4cm,xlabel={tempo (s)},ylabel={posi\c{c}\~ao},
   xmin=0,xmax=6,ymin=0,ymax=1.5,grid=both,grid style={corcinza!20},
@@ -1049,7 +1231,7 @@ Coerente com o alvo $t_s\le2{,}5$--$3$ s.
 \end{exemplo}
 
 %==============================================================================
-\chapter{M\'etodo de Ziegler--Nichols}
+\chapter{M\'etodo de Ziegler--Nichols}\label{cap:zn}
 %==============================================================================
 \index{Ziegler-Nichols}
 
@@ -1057,14 +1239,14 @@ Coerente com o alvo $t_s\le2{,}5$--$3$ s.
 Quando n\~ao se tem o modelo, Ziegler--Nichols (ZN) fornece ganhos a partir de
 \textbf{um experimento}: leva-se o sistema ao limite da estabilidade.
 
-\begin{conceito}[Ku e Tu]
+\begin{conceito}[$K_u$ e $T_u$]
 Com apenas o termo P ($K_i=K_d=0$), aumente $K_p$ at\'e a sa\'ida entrar em
 \textbf{oscila\c{c}\~ao sustentada} (amplitude constante). Esse ganho \'e o
 \textbf{ganho cr\'itico} $K_u$; o per\'iodo dessa oscila\c{c}\~ao \'e o
 \textbf{per\'iodo cr\'itico} $T_u$.
 \end{conceito}
 
-\begin{table}[htbp]\centering
+\begin{table}[h]\centering
 \caption{Tabela cl\'assica de Ziegler--Nichols (malha fechada).}
 \label{tab:zn}
 \begin{tabular}{lccc}
@@ -1078,7 +1260,7 @@ PID & $0{,}60\,K_u$ & $0{,}50\,T_u$ & $0{,}125\,T_u$ \\
 \end{table}
 \noindent (Lembrando: $K_i=K_p/T_i$ e $K_d=K_p\,T_d$.)
 
-\begin{figure}[htbp]\centering
+\begin{figure}[h]\centering
 \begin{tikzpicture}
 \begin{axis}[width=12cm,height=4.6cm,xlabel={tempo (s)},ylabel={erro},
   xmin=0,xmax=9,ymin=-1.4,ymax=1.4,grid=both,grid style={corcinza!20},
@@ -1101,7 +1283,7 @@ PID & $0{,}60\,K_u$ & $0{,}50\,T_u$ & $0{,}125\,T_u$ \\
   \item Me\c{c}a o \textbf{per\'iodo} dessa oscila\c{c}\~ao com cron\^ometro ou pelo
   \emph{timestamp} da telemetria: \'e $T_u$.
   \item Calcule $K_p=0{,}6K_u$, $T_i=0{,}5T_u$, $T_d=0{,}125T_u$ e converta para
-  $K_i,K_d$. Use como \textbf{chute inicial} e refine (Cap.~22).
+  $K_i,K_d$. Use como \textbf{chute inicial} e refine (Cap.~\ref{cap:sintonia}).
 \end{enumerate}
 \end{projeto}
 
@@ -1117,14 +1299,14 @@ derivativo.
 %##############################################################################
 
 %==============================================================================
-\chapter{Fundamentos de Controle Digital}
+\chapter{Fundamentos de Controle Digital}\label{cap:digital}
 %==============================================================================
 \index{controle digital}\index{amostragem}
 
 O ESP32 n\~ao resolve integrais cont\'inuas: ele executa o controlador em
 \textbf{instantes discretos}, a cada $T$ segundos. Isso traz quatro conceitos.
 
-\section[Amostragem e per\'iodo T]{Amostragem e per\'iodo $T$}
+\section{Amostragem e per\'iodo $T$}
 A cada $T$ o firmware l\^e o sensor, calcula $u$ e comanda os motores.
 \begin{projeto}
 Nosso la\c{c}o roda a \textbf{100\,Hz} (\texttt{LOOP\_HZ = 100}), logo
@@ -1157,7 +1339,67 @@ seguran\c{c}a.
 \end{exemplo}
 
 %==============================================================================
-\chapter{O Dom\'inio Z}
+\chapter{Atrasos no Sistema}\label{cap:atrasos}
+%==============================================================================
+\index{atraso}
+
+Todo sistema real \textbf{demora} a reagir. Entre a bola se mover e a mesa
+responder de fato, passam-se alguns milissegundos --- e atraso, em controle, \'e
+\textbf{inimigo da estabilidade}. Vejamos de onde vem e por qu\^e.
+
+\section{As tr\^es fontes de atraso}
+\begin{enumerate}[leftmargin=1.5em]
+  \item \textbf{Atraso de amostragem.} O firmware s\'o ``olha'' a bola a cada
+  $T=10$ ms. Em m\'edia, a leitura usada j\'a tem \textbf{$T/2=5$ ms} de idade.
+  \item \textbf{Atraso de processamento.} Ler o ADC, filtrar, rodar os dois PIDs e a
+  cinem\'atica consome tempo de CPU; no nosso caso, pequeno perante os 10 ms do la\c{c}o.
+  \item \textbf{Atraso do atuador.} O motor n\~ao salta para o \^angulo: ele
+  \textbf{acelera e desacelera} (perfil trapezoidal). Entre comandar a inclina\c{c}\~ao
+  e ela \emph{acontecer} passam-se alguns milissegundos.
+\end{enumerate}
+
+\begin{table}[h]\centering
+\caption{Ordem de grandeza dos atrasos no Ball Balancer.}
+\label{tab:atrasos}
+\small
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+Fonte & Ordem & Como o projeto mitiga \\
+\midrule
+Amostragem & $\sim$5 ms ($T/2$) & subir a taxa: 50 $\to$ \textbf{100 Hz} (metade do atraso) \\
+Processamento & $<$1 ms & c\'odigo enxuto; telemetria limitada \\
+Filtro (IIR/derivada) & $\sim$10--25 ms & $\alpha$ ajustado (ru\'ido $\times$ atraso) \\
+Atuador (rampa) & poucos ms & acelera\c{c}\~ao alta o bastante, sem perder passo \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Por que atraso reduz a estabilidade}
+\begin{intuicao}[Dirigir olhando pelo retrovisor]
+Imagine corrigir a dire\c{c}\~ao de um carro vendo a estrada com 1 segundo de
+\textbf{atraso}. Voc\^e reage ao que \emph{j\'a passou}: corrige tarde, passa do
+ponto, corrige de novo --- e come\c{c}a a serpentear. O atraso transforma um
+controle calmo em oscilat\'orio.
+\end{intuicao}
+
+Tecnicamente, o atraso \textbf{consome margem de fase}: o termo derivativo, que
+deveria \emph{antecipar} o movimento, passa a agir sobre informa\c{c}\~ao
+\emph{velha} e perde efic\'acia. Por isso n\~ao adianta s\'o ``encher de $K_d$'':
+com muito atraso, nem o derivativo segura a oscila\c{c}\~ao.
+
+\begin{projeto}[Como o projeto combate o atraso]
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{La\c{c}o a 100 Hz} (em vez de 50): corta o atraso de amostragem pela
+  metade --- melhoria direta de resposta.
+  \item \textbf{Filtro derivativo com $\tau_d$ moderado}: corta ru\'ido sem
+  adicionar atraso demais (Cap.~\ref{cap:filtro}).
+  \item \textbf{Rejei\c{c}\~ao de \emph{outliers}} no lugar de filtragem pesada:
+  remove o \emph{glitch} \textbf{sem} a lentid\~ao de um filtro forte.
+\end{itemize}
+\end{projeto}
+
+%==============================================================================
+\chapter{O Dom\'inio Z}\label{cap:z}
 %==============================================================================
 \index{transformada Z}\index{dominio z@dom\'inio $z$}
 
@@ -1172,7 +1414,7 @@ O operador-chave \'e o \textbf{atraso de uma amostra}: $z^{-1}$ significa ``o va
 de uma amostra atr\'as''. Isso \'e tudo o que um microcontrolador precisa --
 guardar valores anteriores.
 
-\section[Rela\c{c}\~ao entre s e z]{Rela\c{c}\~ao entre $s$ e $z$}
+\section{Rela\c{c}\~ao entre $s$ e $z$}
 A ponte exata \'e
 \begin{equation}
 \boxed{\ z = e^{sT}\ }
@@ -1186,7 +1428,7 @@ semiplano direito de $s$ (inst\'avel) & $\to$ \textbf{fora} do c\'irculo unit\'a
 \end{tabular}
 \end{center}
 
-\begin{figure}[htbp]\centering
+\begin{figure}[h]\centering
 \begin{tikzpicture}[scale=0.95]
   \begin{scope}
     \draw[seta] (-2.2,0)--(1.0,0) node[right,font=\footnotesize]{$\sigma$};
@@ -1216,7 +1458,7 @@ unit\'ario}?''. \'E o mesmo conceito de estabilidade, vestido para o tempo discr
 \end{intuicao}
 
 %==============================================================================
-\chapter{Discretiza\c{c}\~ao}
+\chapter{Discretiza\c{c}\~ao}\label{cap:discret}
 %==============================================================================
 \index{discretizacao@discretiza\c{c}\~ao}
 
@@ -1224,7 +1466,7 @@ Para rodar o PID cont\'inuo no ESP32, aproximamos as opera\c{c}\~oes de
 c\'alculo por f\'ormulas que usam apenas amostras. H\'a tr\^es m\'etodos cl\'assicos
 de aproximar a integral/derivada (isto \'e, o operador $s$).
 
-\begin{table}[htbp]\centering
+\begin{table}[h]\centering
 \caption{M\'etodos de discretiza\c{c}\~ao (aproxima\c{c}\~oes de $s$).}
 \label{tab:discret}
 \small
@@ -1256,20 +1498,20 @@ microcontroladores:
   \item \textbf{Integral por Euler \emph{forward}}: \texttt{p->integ += err*dt;}
   --- i.e.\ $I[k]=I[k-1]+e[k]\,T$.
   \item \textbf{Derivada por diferen\c{c}a regressiva}: $\dfrac{e[k]-e[k-1]}{T}$,
-  seguida de um filtro passa-baixa (Cap.~18).
+  seguida de um filtro passa-baixa (Cap.~\ref{cap:filtro}).
 \end{itemize}
 Com $T=0{,}01$ s e din\^amica lenta ($\omega_n\!\approx\!2{,}2$), qualquer um dos
 m\'etodos daria praticamente o mesmo resultado --- a escolha \'e por simplicidade.
 \end{projeto}
 
 %==============================================================================
-\chapter{O PID Discreto}
+\chapter{O PID Discreto}\label{cap:pidd}
 %==============================================================================
 \index{PID discreto}
 
 \section{Do cont\'inuo ao discreto, termo a termo}
 Partindo de $u(t)=K_p e+K_i\!\int e+K_d\dot e$ e aplicando as aproxima\c{c}\~oes do
-Cap.~16:
+Cap.~\ref{cap:discret}:
 
 \paragraph{Proporcional.} Direto: $P[k]=K_p\,e[k]$.
 
@@ -1289,13 +1531,13 @@ Juntando, a lei de controle discreta que roda a cada 10\,ms \'e
 \boxed{\ u[k]=K_p\,e[k]+K_i\,I[k]+K_d\,d_{lpf}[k]\ }
 \label{eq:uk}
 \end{equation}
-seguida de \textbf{satura\c{c}\~ao} e \textbf{anti-windup} (Cap.~19), onde
-$d_{lpf}$ \'e a derivada \emph{filtrada} (Cap.~18). A cada borda de ``sem bola'', o
+seguida de \textbf{satura\c{c}\~ao} e \textbf{anti-windup} (Cap.~\ref{cap:windup}), onde
+$d_{lpf}$ \'e a derivada \emph{filtrada} (Cap.~\ref{cap:filtro}). A cada borda de ``sem bola'', o
 estado ($I$ e hist\'orico) \'e \textbf{zerado} (\texttt{pid\_reset}) para n\~ao
 arrastar lixo de uma tentativa \`a pr\'oxima.
 
 %==============================================================================
-\chapter{Filtro Derivativo}
+\chapter{Filtro Derivativo}\label{cap:filtro}
 %==============================================================================
 \index{filtro derivativo}\index{ruido@ru\'ido}
 
@@ -1304,7 +1546,7 @@ A derivada \emph{bruta} divide a diferen\c{c}a de amostras por $T=0{,}01$ s --- 
 seja, \textbf{multiplica por 100}. Um pequeno tremor de ru\'ido no sensor entre
 duas amostras vira um pico enorme no termo D, que ``chuta'' os motores.
 
-\section[A solu\c{c}\~ao: passa-baixa de primeira ordem]{A solu\c{c}\~ao: passa-baixa de 1.\textsuperscript{a} ordem}
+\section{A solu\c{c}\~ao: passa-baixa de 1.\textsuperscript{a} ordem}
 Filtramos a derivada com um IIR (m\'edia exponencial):
 \begin{equation}
 d_{lpf}[k]=d_{lpf}[k-1]+\alpha\big(d[k]-d_{lpf}[k-1]\big),
@@ -1313,7 +1555,7 @@ d_{lpf}[k]=d_{lpf}[k-1]+\alpha\big(d[k]-d_{lpf}[k-1]\big),
 Isto equivale, no cont\'inuo, a $C_d(s)=\dfrac{K_d s}{1+\tau_d s}$: derivativo em
 baixas frequ\^encias, ganho limitado em altas.
 
-\begin{exemplo}[O alpha do firmware]
+\begin{exemplo}[O $\alpha$ do firmware]
 Com $\tau_d=0{,}03$ s e $T=0{,}01$ s:
 \[
 \alpha=\frac{0{,}01}{0{,}03+0{,}01}=0{,}25.
@@ -1334,7 +1576,7 @@ if (p->d_tau > 0.0f) {                   /* passa-baixa de 1a ordem */
 \end{lstlisting}
 
 %==============================================================================
-\chapter{Anti-Windup}
+\chapter{Anti-Windup}\label{cap:windup}
 %==============================================================================
 \index{anti-windup}\index{saturacao@satura\c{c}\~ao}\index{windup}
 
@@ -1345,7 +1587,7 @@ sa\'ida j\'a est\'a saturada e n\~ao melhora. Quando o erro finalmente inverte, 
 integrador inflado demora a ``descarregar'', causando um \textbf{overshoot
 gigante}.
 
-\begin{figure}[htbp]\centering
+\begin{figure}[h]\centering
 \begin{tikzpicture}
 \begin{axis}[width=12cm,height=4.8cm,xlabel={tempo},ylabel={sa\'ida $u$},
   xmin=0,xmax=6,ymin=0,ymax=0.55,grid=both,grid style={corcinza!20},
@@ -1388,7 +1630,62 @@ if (out > p->out_max) {
 %##############################################################################
 
 %==============================================================================
-\chapter{An\'alise do C\'odigo}
+\chapter{O Sensor: a Tela Resistiva}\label{cap:sensor}
+%==============================================================================
+\index{tela resistiva}\index{sensor}
+
+Sem medir a bola, n\~ao h\'a realimenta\c{c}\~ao. O sensor do projeto \'e uma
+\textbf{tela resistiva de 4 fios} ($187\times141$ mm) sobre a qual a bola repousa.
+
+\section{Como funciona}
+A tela tem \textbf{duas camadas} condutoras separadas por micro-espa\c{c}adores. O
+peso da bola \textbf{encosta} uma camada na outra no ponto de contato. Para ler o
+eixo X, aplica-se uma tens\~ao ao longo de uma camada (um \textbf{divisor de
+tens\~ao} na dire\c{c}\~ao X) e l\^e-se a tens\~ao no ponto de contato pela outra
+camada --- ela \'e \textbf{proporcional \`a posi\c{c}\~ao}. Trocando o papel das
+camadas, l\^e-se Y. Dois ciclos $\Rightarrow$ coordenadas $(x,y)$.
+
+\begin{intuicao}
+A tela \'e um \textbf{potenci\^ometro 2D}: a posi\c{c}\~ao da bola vira uma
+fra\c{c}\~ao da tens\~ao aplicada. Barato, simples e sem c\^amera.
+\end{intuicao}
+
+\section{Convers\~ao para coordenadas}
+O ADC do ESP32 l\^e a tens\~ao como um n\'umero ``cru'' de 12 bits ($0$--$4095$). A
+calibra\c{c}\~ao mapeia o cru para mil\'imetros por uma reta:
+\[
+x_{mm} = \frac{\text{cru}_x - \text{cru}_{\min}}{\text{cru}_{\max}-\text{cru}_{\min}}\times 187.
+\]
+
+\section{Calibra\c{c}\~ao}
+O firmware aprende $\text{cru}_{\min}$ e $\text{cru}_{\max}$ de cada eixo colocando a
+bola nos \textbf{4 cantos} (comando \texttt{CAL}); o \textbf{centro \'e derivado}
+deles, n\~ao medido (medi-lo ``no olho'' enviesaria a reta). Os valores ficam no
+NVS e valem ap\'os reiniciar.
+
+\section{Ru\'ido e quantiza\c{c}\~ao}
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Ru\'ido el\'etrico}: motores e o acoplamento capacitivo entre as
+  camadas poluem a leitura. Defesas: m\'edia de 8 amostras de ADC, filtro IIR
+  ($\alpha=0{,}45$), \textbf{detec\c{c}\~ao digital} de presen\c{c}a (imune ao
+  acoplamento) e \textbf{rejei\c{c}\~ao de \emph{outliers}}.
+  \item \textbf{Quantiza\c{c}\~ao}: 12 bits em 187 mm d\~ao $\sim$0{,}05 mm por
+  degrau de ADC --- fino o bastante; o limite pr\'atico \'e o ru\'ido, n\~ao a
+  resolu\c{c}\~ao.
+\end{itemize}
+
+\section{Impacto no controle}
+\begin{atencao}[O sensor \'e o teto do desempenho]
+Ru\'ido e atraso de leitura \textbf{limitam o quanto de $K_d$} se pode usar: como o
+derivativo amplifica ru\'ido (Cap.~\ref{cap:filtro}), uma leitura suja obriga a
+filtrar mais --- o que \emph{adiciona} atraso (Cap.~\ref{cap:atrasos}). Por isso
+investir na \textbf{qualidade da medida} (detec\c{c}\~ao digital, rejei\c{c}\~ao de
+\emph{glitch}) foi t\~ao decisivo quanto sintonizar o PID: melhor sensor
+$\Rightarrow$ mais $K_d$ \'util $\Rightarrow$ resposta mais firme.
+\end{atencao}
+
+%==============================================================================
+\chapter{An\'alise do C\'odigo}\label{cap:codigo}
 %==============================================================================
 \index{firmware}
 
@@ -1412,7 +1709,7 @@ p->integ += err * dt;                    /* integral Euler forward  */
 float out = p->kp*err + p->ki*p->integ + p->kd*deriv;  /* u[k] (Eq.) */
 /* saturacao + anti-windup (Cap. 19) ... */
 \end{lstlisting}
-\begin{conceito}[Mapeamento teoria para c\'odigo]
+\begin{conceito}[Mapeamento teoria $\to$ c\'odigo]
 \texttt{p->kp*err} $=K_p e[k]$;\quad
 \texttt{p->ki*p->integ} $=K_i I[k]$;\quad
 \texttt{p->kd*deriv} $=K_d d_{lpf}[k]$.\quad
@@ -1421,7 +1718,7 @@ acumulador \texttt{integ}, o erro anterior \texttt{prev\_err} e o estado do filt
 \texttt{d\_lpf}.
 \end{conceito}
 
-\section[control.c --- o la\c{c}o de 100 Hz]{\texttt{control.c} --- o la\c{c}o de 100\,Hz}
+\section{\texttt{control.c} --- o la\c{c}o de 100\,Hz}
 A cada 10\,ms: l\^e o toque (com detec\c{c}\~ao digital e rejei\c{c}\~ao de
 \emph{outliers}), aplica o \textbf{debounce} de presen\c{c}a, roda os dois PIDs,
 soma o \textbf{TRIM} e converte a inclina\c{c}\~ao em \^angulos.
@@ -1457,15 +1754,15 @@ $\dfrac{200\cdot16}{360}\approx8{,}9$ passos por grau. \'E o elo final entre o
 \end{projeto}
 
 %==============================================================================
-\chapter{Arquitetura Completa do Sistema}
+\chapter{Arquitetura Completa do Sistema}\label{cap:arq}
 %==============================================================================
 \index{arquitetura}
 
 \section{O fluxo de ponta a ponta}
-\begin{figure}[htbp]\centering
+\begin{figure}[h]\centering
 \begin{tikzpicture}[node distance=8mm and 9mm,every node/.style={font=\footnotesize}]
   \node[blocoS] (sensor) {Tela resistiva\\(detec\c{c}\~ao digital\\+ rejei\c{c}\~ao de outliers)};
-  \node[bloco,right=of sensor] (pid) {2$\times$ PID\\$u[k]$ (Eq.~18.2)};
+  \node[bloco,right=of sensor] (pid) {2$\times$ PID\\$u[k]$ (Eq.~\eqref{eq:uk})};
   \node[bloco,right=of pid] (trim) {$+$ TRIM\\(feedforward)};
   \node[bloco,right=of trim] (kin) {Cinem\'atica\\3RPS};
   \node[bloco,below=of kin] (step) {Steppers\\(perfil trapez.)};
@@ -1484,7 +1781,7 @@ $\dfrac{200\cdot16}{360}\approx8{,}9$ passos por grau. \'E o elo final entre o
 \end{figure}
 
 \section{Camadas de software}
-\begin{table}[htbp]\centering
+\begin{table}[h]\centering
 \caption{M\'odulos do firmware e seu papel.}
 \label{tab:modulos}
 \small
@@ -1509,10 +1806,10 @@ parar \emph{exatamente} no alvo (velocidade segura $v_{lim}=\sqrt{2ad}$). Sem es
 rampa, a partida brusca causaria \textbf{perda de passos}. A banda do atuador
 (centenas de Hz) \'e muito maior que a da bola ($\sim$0,35 Hz), por isso ele
 \textbf{n\~ao compromete} a estabilidade projetada e pode ser tratado como ganho
-quase-est\'atico na an\'alise (Cap.~6).
+quase-est\'atico na an\'alise (Cap.~\ref{cap:blocos}).
 
 %==============================================================================
-\chapter{Guia Pr\'atico de Sintonia}
+\chapter{Guia Pr\'atico de Sintonia}\label{cap:sintonia}
 %==============================================================================
 \index{sintonia}\index{tuning}
 
@@ -1530,12 +1827,12 @@ cada segundo.
   \item \textbf{Ajuste $K_i$:} um \textbf{toque} para eliminar o desvio residual da
   mesa torta. (\texttt{PID - 0.0001 -})
   \item \textbf{TRIM:} com a bola centrada, \texttt{TRIM} e \texttt{TRIM SAVE}
-  (Cap.~23).
+  (Cap.~\ref{cap:futuro}).
   \item \textbf{Grave:} \texttt{PID SAVE}.
 \end{enumerate}
 
 \section{Reconhecendo cada patologia}
-\begin{table}[htbp]\centering
+\begin{table}[h]\centering
 \caption{Diagn\'ostico r\'apido por sintoma.}
 \label{tab:diag}
 \small
@@ -1553,16 +1850,70 @@ Sintoma & Causa prov\'avel & A\c{c}\~ao \\
 \end{tabularx}
 \end{table}
 
+\subsection{Assinaturas visuais (o que olhar na bancada)}
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Excesso de $K_p$:} a bola fica \textbf{nervosa} --- vibra/oscila em
+  torno do centro com amplitude que n\~ao morre. \emph{Baixe $K_p$ ou suba $K_d$.}
+  \item \textbf{Falta de $K_d$:} a bola \textbf{passa do centro} e volta v\'arias
+  vezes (overshoot grande) antes de assentar; a qualquer empurr\~ao, ``surta''.
+  \emph{Suba $K_d$.}
+  \item \textbf{Excesso de $K_i$:} \textbf{oscila\c{c}\~ao lenta e larga} (vai longe
+  de um lado, depois do outro), com per\'iodo de v\'arios segundos --- \'e o
+  \emph{windup}. \emph{Baixe $K_i$.}
+  \item \textbf{Falta de $K_i$:} a bola estabiliza, por\'em \textbf{deslocada} do
+  centro (mesa torta). \emph{Suba $K_i$ ou use \texttt{TRIM}.}
+\end{itemize}
+
 \begin{atencao}[A li\c{c}\~ao do seu pr\'oprio rig]
 Quando o $K_d$ salvo ficou cerca de 120$\times$ abaixo do necess\'ario, a mesa
-``surtava do nada'' --- $\zeta\!\approx\!0{,}17$ (Cap.~10). A cura foi exatamente a
+``surtava do nada'' --- $\zeta\!\approx\!0{,}17$ (Cap.~\ref{cap:zeta}). A cura foi exatamente a
 teoria: \textbf{mais amortecimento} (subir $K_d$) e \textbf{rejei\c{c}\~ao de
 leituras esp\'urias}. Confie no $\zeta$: ele prev\^e o comportamento antes de voc\^e
 tocar na mesa.
 \end{atencao}
 
+\section{Teoria vs.\ Hardware: por que os ganhos n\~ao batem}
+\index{teoria vs hardware}
+Os ganhos calculados por aloca\c{c}\~ao de polos (Cap.~\ref{cap:ganhos}) quase nunca
+s\~ao os ganhos \emph{finais} no rig --- e isso \textbf{n\~ao \'e um erro}. O modelo
+$P(s)=A/s^2$ \'e ideal; o hardware carrega imperfei\c{c}\~oes que o modelo ignora.
+
+\begin{table}[h]\centering
+\caption{Por que o ganho de bancada difere do ganho de projeto.}
+\label{tab:tvh}
+\small
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+Fator real & Efeito sobre os ganhos \\
+\midrule
+\textbf{Ru\'ido} do sensor & limita $K_d$ (o derivativo amplifica ru\'ido) \\
+\textbf{Satura\c{c}\~ao} ($\pm0{,}25$ rad) & ganhos altos saturam mais cedo; \emph{n\~ao} aceleram \\
+\textbf{Atrasos} (amostragem, motor) & consomem margem de fase; pedem cautela com $K_p$ \\
+\textbf{Limites mec\^anicos} (folga, atrito, base torta) & criam erros que o modelo ideal n\~ao prev\^e \\
+\textbf{Cinem\'atica n\~ao linear} & o ganho efetivo varia com a inclina\c{c}\~ao \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{intuicao}[A teoria acerta o \emph{ponto de partida}, n\~ao o ponto final]
+A aloca\c{c}\~ao de polos diz \emph{onde come\c{c}ar} e \emph{para que lado andar}:
+se oscila, falta $K_d$; se desvia, falta $K_i$. O valor exato sai do ajuste fino no
+hardware. \'E como uma receita: as propor\c{c}\~oes v\^em do livro, o ``ponto'' do
+sal voc\^e acerta provando.
+\end{intuicao}
+
+\begin{projeto}[Preparado para a banca]
+Se perguntarem \emph{``por que seus ganhos n\~ao s\~ao os calculados?''}, a resposta
+\'e: o modelo \'e \textbf{linear, ideal e sem atraso}; o rig tem ru\'ido,
+satura\c{c}\~ao, atraso e folga mec\^anica. A teoria deu o \textbf{projeto inicial}
+(estrutura do controlador, ordem de grandeza e dire\c{c}\~ao de ajuste) e validou o
+comportamento em simula\c{c}\~ao; o conjunto final foi \textbf{refinado
+experimentalmente}, apoiado na rejei\c{c}\~ao de ru\'ido e no \emph{feedforward}
+TRIM. Teoria e pr\'atica n\~ao se contradizem --- complementam-se.
+\end{projeto}
+
 %==============================================================================
-\chapter{Melhorias Futuras}
+\chapter{Melhorias Futuras}\label{cap:futuro}
 %==============================================================================
 \index{feedforward}\index{LQR}\index{MPC}\index{Kalman}
 
@@ -1583,29 +1934,24 @@ corre\c{c}\~ao direto, e o PID s\'o cuida do que \emph{varia}. \'E separar a
 rejei\c{c}\~ao da perturba\c{c}\~ao DC da regula\c{c}\~ao em torno dela.
 \end{intuicao}
 
-\section{Controle em Espa\c{c}o de Estados e LQR}
-Em vez de $P(s)=A/s^2$, escreve-se $\dot{\mathbf{x}}=\mathbf{A}\mathbf{x}+\mathbf{B}u$
-com estado $\mathbf{x}=[\,\text{posi\c{c}\~ao},\ \text{velocidade}\,]^\top$. O
-\textbf{LQR} escolhe o ganho de realimenta\c{c}\~ao $\mathbf{K}$ que minimiza um
-custo $\int(\mathbf{x}^\top Q\mathbf{x}+Ru^2)\,dt$, dando um m\'etodo
-\emph{\'otimo} e sistem\'atico de ``alocar polos'' --- generaliza\c{c}\~ao natural
-do Cap.~9 para m\'ultiplos estados/eixos.
+\section{Para al\'em do PID (men\c{c}\~ao breve)}
+O PID resolve muito bem este sistema. Se um dia se quiser ir adiante, ficam as
+\textbf{cita\c{c}\~oes} a seguir --- \emph{fora do escopo} desta apostila, que foca
+no dom\'inio completo do PID digital atual:
+\begin{itemize}[leftmargin=1.4em]
+  \item \textbf{Espa\c{c}o de estados / LQR:} projeta o controlador tratando
+  posi\c{c}\~ao e velocidade como ``estado'', de forma \'otima e sistem\'atica ---
+  generaliza a aloca\c{c}\~ao de polos do Cap.~\ref{cap:ganhos}.
+  \item \textbf{Filtro de Kalman:} estima a velocidade de forma \'otima a partir da
+  medida ruidosa, em vez da derivada num\'erica (Cap.~\ref{cap:filtro}).
+  \item \textbf{MPC:} otimiza a a\c{c}\~ao respeitando \emph{explicitamente} a
+  satura\c{c}\~ao de $\pm0{,}25$ rad.
+  \item \textbf{Controle adaptativo:} reajusta os ganhos sozinho conforme a planta
+  muda --- a fam\'ilia do \texttt{PIDAUTO} embarcado.
+\end{itemize}
+Todas \textbf{complementam}, n\~ao substituem, o PID consolidado aqui.
 
-\section{Filtro de Kalman}
-\index{Kalman}
-A velocidade da bola hoje vem de uma derivada filtrada (ruidosa). Um \textbf{filtro
-de Kalman} estimaria posi\c{c}\~ao \emph{e} velocidade de forma \'otima, fundindo o
-modelo $A/s^2$ com a medida ruidosa --- melhor que a derivada num\'erica, e elimina
-boa parte do problema do Cap.~18.
-
-\section{MPC e Controle Adaptativo}
-\textbf{MPC} (Model Predictive Control) otimiza a a\c{c}\~ao olhando alguns passos \`a
-frente e \textbf{respeitando explicitamente} a satura\c{c}\~ao de $\pm0{,}25$ rad ---
-algo que hoje tratamos por anti-windup. \textbf{Controle adaptativo} ajustaria os
-ganhos sozinho conforme a planta muda (\'e a fam\'ilia do \texttt{PIDAUTO}, a
-vers\~ao embarcada e simplificada da ideia).
-
-\begin{table}[htbp]\centering
+\begin{table}[h]\centering
 \caption{Quando valeria a pena cada t\'ecnica avan\c{c}ada.}
 \label{tab:avancado}
 \small
@@ -1635,11 +1981,8 @@ de quem j\'a domina o b\'asico. Boa defesa de projeto!
 %==============================================================================
 \backmatter
 \nocite{*}
-\begingroup
-\sloppy
 \bibliographystyle{ieeetr}
 \bibliography{referencias}
-\endgroup
 \addcontentsline{toc}{chapter}{Refer\^encias}
 
 \printindex

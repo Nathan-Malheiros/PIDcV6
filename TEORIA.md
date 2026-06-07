@@ -225,9 +225,10 @@ uma escolha **conservadora e robusta** para o *hardware real*, por dois motivos:
 
 ## 6. Controle digital (discretização)
 
-O laço roda a **`50 Hz`** (`LOOP_HZ = 50`), logo `T = 0,02 s`. A frequência de
-Nyquist é 25 Hz ≫ `ωn/2π ≈ 0,23 Hz`, então a amostragem é folgada e a aproximação
-contínua de §4–5 é válida.
+O laço roda a **`100 Hz`** (`LOOP_HZ = 100`), logo `T = 0,01 s`. A frequência de
+Nyquist é 50 Hz ≫ `ωn/2π ≈ 0,23 Hz`, então a amostragem é folgada e a aproximação
+contínua de §4–5 é válida. (O laço subiu de 50 → 100 Hz para reduzir o atraso de
+amostragem pela metade e melhorar o tempo de resposta.)
 
 ### 6.1. Integral — Euler para a frente
 
@@ -244,10 +245,11 @@ $$ d[k] = \frac{e[k]-e[k-1]}{T}, \qquad
 
 com o coeficiente derivado de `τd`:
 
-$$ \alpha = \frac{T}{\tau_d + T} = \frac{0{,}02}{0{,}03+0{,}02} = 0{,}4 $$
+$$ \alpha = \frac{T}{\tau_d + T} = \frac{0{,}01}{0{,}03+0{,}01} = 0{,}25 $$
 
 No código (`pid.c`): `float a = dt/(d_tau+dt); d_lpf += a*(deriv − d_lpf);`.
 O filtro corta ruído acima de `1/(2πτd) ≈ 5,3 Hz`, preservando a dinâmica da bola.
+(A 100 Hz, `α` cai de 0,4 → 0,25: mais suavização por amostra, mesma `τd`.)
 
 ### 6.3. Anti-windup por *back-calculation*
 
@@ -302,7 +304,8 @@ $$ v_{lim} = \sqrt{2\,a\,d} $$
 
 onde `d` é a distância restante (passos) e `a` a aceleração. Sem essa rampa, uma
 partida brusca causaria **perda de passos** (o motor "escorrega"). Em equilíbrio
-usa-se `1500 passos/s` e `20000 passos/s²`; no homing, valores menores.
+usa-se `1800 passos/s` e `16000 passos/s²` (suaves, pressupõem o DRV8825 em
+**1/16** — M0/M1/M2 = L/L/H); no homing, valores menores.
 
 O atuador adiciona um pequeno atraso de fase, mas sua banda (centenas de Hz) é
 muito superior à dinâmica da bola (~0,23 Hz), então não compromete a estabilidade
@@ -318,25 +321,63 @@ projetada.
   quaisquer `Kp, Kd > 0`. O derivativo é o que garante a estabilidade.
 - **Com o I** (pequeno): adiciona um polo lento em malha aberta; mantido com `Ti`
   longo (25–40 s) para não reduzir a margem de fase de forma relevante.
-- **Amostragem**: `T = 0,02 s` introduz atraso ≈ `T/2 = 0,01 s`, desprezível
-  frente a `1/ωn ≈ 0,7 s`.
+- **Amostragem**: `T = 0,01 s` (100 Hz) introduz atraso ≈ `T/2 = 0,005 s`,
+  desprezível frente a `1/ωn ≈ 0,7 s`.
 
 ---
 
 ## 10. Procedimento prático de sintonia (no hardware)
 
-Feito ao vivo pela tela **PID** do `calibrate.py` (sem rebuild — comandos
-`PID`/`PID SAVE` pela serial):
+Feito ao vivo pelo **terminal serial** (`PID`/`PID SAVE`, sem rebuild — ver
+`SERIAL_COMMANDS.md`). Ligue o monitor de erro com **`ERROR`** para acompanhar
+`ex/ey/dist` a cada segundo:
 
 1. Zere `Ki` e `Kd`. Suba `Kp` até a bola **oscilar** de forma sustentada em torno
    do centro (ganho crítico `Ku`, período `Tu`).
 2. Adicione `Kd` para **amortecer** a oscilação (alvo: sem overshoot ⇒ `ζ ≈ 1`).
+   **Num duplo integrador este é o passo que estabiliza** (§2.3): com `Kd` baixo
+   demais a malha fica sub-amortecida e qualquer perturbação vira uma excursão
+   grande ("a mesa surta do nada").
 3. Adicione um **toque** de `Ki` só para eliminar o desvio residual (mesa torta).
-4. `PID SAVE` (ESPAÇO) grava no **NVS** — persiste entre reinicializações.
+4. `PID SAVE` grava no **NVS** — persiste entre reinicializações.
 
 Como ponto de partida quantitativo, Ziegler–Nichols clássico sugere
 `Kp ≈ 0,6 Ku`, `Ti ≈ 0,5 Tu`, `Td ≈ 0,125 Tu` — útil como chute inicial antes do
 ajuste fino acima.
+
+### 10.1. Robustez de leitura (rejeição de outliers)
+
+Uma única leitura espúria do painel (acoplamento dos motores, repique do contato,
+amostra de ADC suja) injeta um **erro falso e enorme** que, derivado, dá um
+"chute" na saída — a mesa pode ir ao talo mesmo com a bola parada. O firmware
+**rejeita saltos impossíveis**: se a posição pula mais de `30 mm` entre amostras
+(10 ms), o valor é descartado e mantém-se o último bom; se o salto **persistir**
+por ~3 amostras (movimento real ou recolocação), é aceito (resync). A bola real
+anda no máx. ~8 mm/amostra, então isso só filtra glitch — sem atrasar o controle
+(`touch_screen.c`).
+
+### 10.2. Compensação da base torta — *feedforward* de nível (`TRIM`)
+
+A estrutura inteira ficar levemente **torta** equivale a uma **perturbação
+constante (DC)** na entrada da planta: a plataforma, na posição "nivelada" dos
+motores, está na verdade inclinada de `θ_base`, e a bola escorrega para um lado.
+Pela §3.2, **só o termo integral** zera erro de regime — ele acumula até comandar
+a inclinação `−θ_base` que mantém a bola no centro.
+
+O problema é a **velocidade**: com `Ki` pequeno (longo `Ti`), o integral leva
+dezenas de segundos a montar essa correção, e como ele **zera a cada bola**
+(`pid_reset`), o desvio reaparece a cada recolocação. A solução adotada é um
+**viés de nível** (comando `TRIM`): transfere-se a inclinação constante que o
+integral descobriu para um *feedforward* fixo, salvo no NVS e aplicado já no boot
+(inclusive em IDLE). Assim a plataforma **nasce nivelada em relação à gravidade**,
+a bola começa no centro, e o integral cuida apenas do resíduo. Formalmente, é
+separar a rejeição da perturbação DC (feedforward, `θ_ff = −θ_base`) da regulação
+em torno dela (PID), em vez de exigir do integral lento as duas coisas.
+
+> **Ganhos atualmente adotados no rig:** `Kp = 6×10⁻⁴`, `Ki = 3×10⁻⁵`,
+> `Kd = 1×10⁻⁴`, sinais `−1/−1`, com a rejeição de outliers e o `TRIM`
+> compensando a base torta. São valores **experimentais** (refinados no hardware);
+> os defaults de fábrica de §5.5 continuam mais conservadores.
 
 ---
 
@@ -345,9 +386,9 @@ ajuste fino acima.
 | Símbolo | Onde | Valor | Origem |
 |---|---|---|---|
 | `A = (5/7)g` | planta | ≈ 7007 mm/s² | Newton–Euler (esfera maciça) |
-| `T` | laço | 0,02 s (50 Hz) | `LOOP_HZ` |
+| `T` | laço | 0,01 s (100 Hz) | `LOOP_HZ` |
 | `τd` | filtro D | 0,03 s | `PID_D_TAU` |
-| `α` | filtro D discreto | 0,4 | `T/(τd+T)` |
+| `α` | filtro D discreto | 0,25 | `T/(τd+T)` |
 | `SIM_KP` | simulação | 1,08×10⁻³ | alocação de polos (§5.2) |
 | `SIM_KI` | simulação | 3,0×10⁻⁴ | "PID melhorado" (§5.3) |
 | `SIM_KD` | simulação | 9,0×10⁻⁴ | "PID melhorado" (§5.3) |

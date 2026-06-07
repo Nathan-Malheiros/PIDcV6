@@ -417,7 +417,7 @@ static void cmd_print_help(void)
     printf(" PID             mostra Kp/Ki/Kd e como mudar\n");
     printf(" PID <kp> <ki> <kd> ('-' mantem) | KP/KI/KD <v> | PID SAVE\n");
     printf(" PIDAUTO         auto-tune do PID (oscila a bola)\n");
-    printf(" CAL             calibra a tela (4 cantos + centro)\n");
+    printf(" CAL             calibra a tela (4 cantos; centro derivado deles)\n");
     printf(" STEPPER         calibra o curso dos motores (MINIMO/MAXIMO)\n");
     printf(" ELIPSE          teste: mesa varre uma elipse (PARAR p/ sair)\n");
     printf(" ZERO            marca ponto morto da tela (acumula) e salva\n");
