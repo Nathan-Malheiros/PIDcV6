@@ -374,10 +374,11 @@ a bola começa no centro, e o integral cuida apenas do resíduo. Formalmente, é
 separar a rejeição da perturbação DC (feedforward, `θ_ff = −θ_base`) da regulação
 em torno dela (PID), em vez de exigir do integral lento as duas coisas.
 
-> **Ganhos atualmente adotados no rig:** `Kp = 6×10⁻⁴`, `Ki = 3×10⁻⁵`,
-> `Kd = 1×10⁻⁴`, sinais `−1/−1`, com a rejeição de outliers e o `TRIM`
-> compensando a base torta. São valores **experimentais** (refinados no hardware);
-> os defaults de fábrica de §5.5 continuam mais conservadores.
+> **Ganhos atuais do firmware:** `Kp = 8×10⁻⁴`, `Ki = 2×10⁻⁵`,
+> `Kd = 1,2×10⁻²`, sinais `−1/−1`, com a rejeição de outliers e o `TRIM`
+> compensando a base torta. São os **defaults compilados** (§5.5), refinados no
+> hardware e persistidos no NVS — o `Kd` alto é justamente o que amortece o duplo
+> integrador (compare com a saturação proposital do derivativo, §6.3).
 
 ---
 

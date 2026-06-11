@@ -1049,7 +1049,7 @@ Conjunto & $K_p$ & $K_i$ & $K_d$ & Observa\c{c}\~ao \\
 Projeto (aloca\c{c}\~ao) & $1{,}08\!\times\!10^{-3}$ & $6{,}83\!\times\!10^{-4}$ & $5{,}4\!\times\!10^{-4}$ & overshoot $\sim$25\% (3.\textsuperscript{a} ordem) \\
 ``Melhorado'' (sim) & $1{,}08\!\times\!10^{-3}$ & $3{,}0\!\times\!10^{-4}$ & $9{,}0\!\times\!10^{-4}$ & menos $K_i$, mais $K_d$ ($\zeta\!\approx\!1{,}15$) \\
 Default firmware & $8{,}0\!\times\!10^{-4}$ & $2{,}0\!\times\!10^{-5}$ & $1{,}2\!\times\!10^{-2}$ & conservador, manso no boot \\
-\textbf{Em opera\c{c}\~ao} & $6{,}0\!\times\!10^{-4}$ & $3{,}0\!\times\!10^{-5}$ & $1{,}0\!\times\!10^{-4}$ & afinado no rig (com TRIM) \\
+\textbf{Em opera\c{c}\~ao} & $8{,}0\!\times\!10^{-4}$ & $2{,}0\!\times\!10^{-5}$ & $1{,}2\!\times\!10^{-2}$ & $=$ default do firmware; afinado no rig (com TRIM) \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -1820,7 +1820,7 @@ cada segundo.
 \section{Roteiro recomendado}
 \begin{enumerate}[leftmargin=1.5em]
   \item \textbf{Ajuste $K_p$:} com $K_i=K_d=0$, suba $K_p$ at\'e a bola reagir bem,
-  por\'em \emph{oscilando} um pouco. (\texttt{KP 0.0006}\dots)
+  por\'em \emph{oscilando} um pouco. (\texttt{KP 0.0008}\dots)
   \item \textbf{Ajuste $K_d$:} adicione derivativo at\'e a oscila\c{c}\~ao
   \textbf{sumir} (alvo: $\zeta\!\approx\!1$, sem overshoot). \emph{\'E o passo que
   estabiliza} o duplo integrador. (\texttt{PID - - 0.012})

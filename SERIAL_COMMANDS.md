@@ -15,9 +15,9 @@
 Estado validado no rig (envie `?` para reler a qualquer momento):
 
 ```text
-GAINS,0.0006,3e-05,0.0001      # Kp=6e-4  Ki=3e-5  Kd=1e-4
+GAINS,0.0008,2e-05,0.012       # Kp=8e-4  Ki=2e-5  Kd=1.2e-2  (defaults do firmware)
 SIGNS,-1,-1                     # realimentação negativa nos dois eixos
-CAL,513,3297,355,3719,1,1,1    # xmin,xmax,ymin,ymax,flip_x,flip_y,swap_xy
+CAL,665,2981,554,3273,1,1,1    # xmin,xmax,ymin,ymax,flip_x,flip_y,swap_xy
 ```
 
 O **TRIM** (viés de nível da base torta) é salvo à parte (`TRIM SHOW` para ver).
@@ -57,7 +57,7 @@ O **TRIM** (viés de nível da base torta) é salvo à parte (`TRIM SHOW` para v
 | Comando | Exemplo | Efeito |
 |---|---|---|
 | `PID` | — | Mostra o menu com os ganhos atuais |
-| `PID <kp> <ki> <kd>` | `PID 0.0006 3e-5 0.0001` | Ajusta os 3 (ambos os eixos) |
+| `PID <kp> <ki> <kd>` | `PID 0.0008 2e-5 0.012` | Ajusta os 3 (ambos os eixos) |
 | `PID <a> <b> <c>` com `-` | `PID - 0.5 0.2` | **`-` mantém** o ganho atual (aqui mantém Kp) |
 | `KP <v>` / `KI <v>` / `KD <v>` | `KD 0.012` | Ajusta um ganho por vez |
 | `PID SAVE` | — | Persiste os ganhos no NVS (`SAVED,pid`) |
@@ -130,7 +130,7 @@ torno deles (não busca do zero). A referência é o **centro da mesa**.
 | Comando | Efeito |
 |---|---|
 | `PIDAUTO` | Parte dos **ganhos atuais** e refina |
-| `PIDAUTO <kp> <ki> <kd>` | Parte dos ganhos informados (ex.: `PIDAUTO 0.0006 3e-5 0.0001`) |
+| `PIDAUTO <kp> <ki> <kd>` | Parte dos ganhos informados (ex.: `PIDAUTO 0.0008 2e-5 0.012`) |
 | `PARAR` | Encerra e aplica o melhor conjunto (depois `PID SAVE` para gravar) |
 
 Como funciona / salvaguardas:

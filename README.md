@@ -83,7 +83,7 @@ Convenção de coordenadas após calibração:
 ## 3. Estrutura do projeto
 
 ```
-PIDcV6/
+Ball Balancer 3RPS/
 ├── README.md              Este arquivo (montagem + operação)
 ├── SERIAL_COMMANDS.md     Referência completa dos comandos seriais
 ├── bb_tool.bat/.ps1       Menu de build / flash / monitor (ESP-IDF)
@@ -316,9 +316,9 @@ do perfil trapezoidal estão em [TEORIA.md](TEORIA.md).
 **Estado validado em operação** (envie `?` para reler):
 
 ```text
-GAINS,0.0006,3e-05,0.0001      # Kp=6e-4  Ki=3e-5  Kd=1e-4
+GAINS,0.0008,2e-05,0.012       # Kp=8e-4  Ki=2e-5  Kd=1.2e-2  (defaults do firmware)
 SIGNS,-1,-1                     # realimentação negativa (confirmado no rig)
-CAL,513,3297,355,3719,1,1,1    # calibração da tela (4 cantos)
+CAL,665,2981,554,3273,1,1,1    # calibração da tela (4 cantos)
 ```
 
 | Item | Status |
